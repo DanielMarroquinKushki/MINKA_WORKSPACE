@@ -13,6 +13,7 @@ Correcciones frente al prompt original:
 """
 
 import json
+import os
 import sys
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -47,6 +48,22 @@ def _warn_if_backend_inferred() -> None:
         )
 
 
+def backend_unavailable_message() -> str | None:
+    """Una línea que explica cómo configurar el backend LLM, o None si hay uno
+    utilizable: Bedrock (LLM_BACKEND/AWS_PROFILE) o ANTHROPIC_API_KEY real
+    (el placeholder "sk-ant-..." de .env.example no cuenta)."""
+    if getattr(config, "USE_BEDROCK", False):
+        return None
+    key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if key and not key.endswith("..."):
+        return None
+    data_dir = config.DATA_DIR
+    return (
+        f"Sin backend LLM: define LLM_BACKEND/AWS_PROFILE en {data_dir}/config_local.py "
+        f"o ANTHROPIC_API_KEY en {data_dir}/.env ({config.APP_NAME} --init crea ambos)."
+    )
+
+
 def build_llm_client():
     """Crea el cliente Anthropic según el backend configurado.
 
@@ -64,6 +81,9 @@ def build_llm_client():
         # Inicializa el session manager (lazy) para dejar la sesión lista.
         config.get_aws_session()
         return build_anthropic_bedrock(config)
+    missing = backend_unavailable_message()
+    if missing:
+        raise RuntimeError(missing)
     return anthropic.Anthropic()
 
 

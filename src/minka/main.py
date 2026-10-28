@@ -48,6 +48,16 @@ HISTORY_RESULT_CHARS = 1500
 READONLY_AGENTS = ("architecture", "report", "pr_review")
 
 
+def _require_llm_backend() -> None:
+    """Sale con una línea clara si no hay backend LLM configurado (no un traceback)."""
+    from minka.core.agents.base_agent import backend_unavailable_message
+
+    missing = backend_unavailable_message()
+    if missing:
+        typer.echo(missing, err=True)
+        raise typer.Exit(code=1)
+
+
 def _make_orchestrator():
     """Import perezoso del orquestador (evita cargar anthropic en --help)."""
     from minka.core.orchestrator.orchestrator import Orchestrator
@@ -316,6 +326,7 @@ def main(
                 "(o usa --project).[/red]"
             )
             raise typer.Exit(code=1)
+        _require_llm_backend()
         from minka.core.evaluator.regression_evals import run_evaluation
 
         report = run_evaluation(proj)
@@ -341,6 +352,7 @@ def main(
         except NotImplementedError as exc:
             console.print(f"[yellow]{exc}[/yellow]")
             raise typer.Exit(code=0)
+        _require_llm_backend()
         result = opt.propose(agent_name, proj)
         if "error" in result:
             console.print(f"[red]{result['error']}[/red]")
@@ -385,6 +397,7 @@ def main(
         console.print('[red]--agent requiere una tarea: minka "tarea" --agent <nombre>[/red]')
         raise typer.Exit(code=2)
 
+    _require_llm_backend()
     orchestrator = _make_orchestrator()
 
     if task:
