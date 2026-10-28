@@ -1,0 +1,30 @@
+config_local.py
+config.local.py
+.env
+
+# Nunca cachear credenciales localmente en el proyecto
+aws_credentials_cache/
+.sso_cache/
+.chromadb/
+output/logs/
+output/patches/
+output/reports/
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.venv/
+venv/
+output/
+.pytest_cache/
+.ruff_cache/
+.deepeval/
+.coverage
+*.egg-info/
+build/
+dist/
+.aws/
+
+# Proyectos locales de cada dev: solo se versiona la plantilla.
+projects/*
+!projects/_template/

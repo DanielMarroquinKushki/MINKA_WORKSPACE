@@ -1,0 +1,3 @@
+⚠️ Se agregó panic() — prohibido en código productivo.
+⚠️ Llave de ejemplo del demo.
+ℹ️ FIXME-DEMO en el diff.

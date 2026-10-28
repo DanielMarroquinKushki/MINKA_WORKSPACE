@@ -1,0 +1,70 @@
+"""
+Configuración del proyecto <NOMBRE>.
+
+Se fusiona ENCIMA de config.py (global) y DEBAJO de config_local.py (dev):
+    global → proyecto → local
+Solo constantes en MAYÚSCULAS (mismo contrato que config_loader).
+"""
+
+# Módulo compartido cuya versión se compara entre repos (check_version_drift).
+CORE_MODULE_NAME = "<modulo-core>"
+
+# Checklist de cada descripción de PR.
+PR_CHECKLIST = [
+    "Cumple convenciones del repo",
+    "Sin secretos/llaves hardcodeadas",
+    "Tests actualizados",
+]
+
+# Pilares del equipo (ver knowledge/team/team_pillars.md). Vacíos = se omiten.
+# TEAM_PILLARS = ["  01 Nombre del pilar — ¿pregunta de control?"]
+# TEAM_PILLARS_HEADING = "Pilares del equipo"
+# TEAM_PILLARS_READABILITY = ""
+# TEAM_PILLARS_LINE_CAP_HINT = ""
+
+# Knowledge por agente (rutas relativas a knowledge/ del proyecto; si un doc
+# no existe en el proyecto, se busca en core/knowledge/ como fallback).
+AGENT_KNOWLEDGE = {
+    "architecture_agent": ["professional/hexagonal_architecture.md", "professional/design_patterns.md"],
+    "development_agent": [
+        "professional/go_best_practices.md",
+        "professional/code_review_checklist.md",
+        "team/team_pillars.md",
+    ],
+    "pr_review_agent": [
+        "professional/code_review_checklist.md",
+        "professional/go_best_practices.md",
+        "team/team_pillars.md",
+    ],
+    "debug_agent":        [],
+    "report_agent":       [],
+    "meta_agent":         [],
+}
+
+# Tools permitidas por agente. Seguridad por diseño: solo development_agent
+# accede a escritura/git de commit.
+AGENT_TOOLS = {
+    "architecture_agent": [
+        "read_file", "scan_directory", "list_files", "grep_code", "find_interface",
+        "find_usages", "parse_interfaces", "detect_patterns", "check_core_version",
+        "map_dependencies", "check_version_drift", "detect_risks",
+    ],
+    "development_agent": [
+        "read_file", "scan_directory", "grep_code", "find_interface", "find_usages",
+        "parse_interfaces", "write_file", "apply_diff", "create_branch", "show_diff",
+        "current_branch", "git_log", "commit_change", "detect_risks",
+    ],
+    "pr_review_agent": [
+        "read_file", "show_diff", "git_log", "validate_diff", "create_pr_description",
+        "grep_code", "find_usages", "detect_risks", "check_pci_compliance", "check_version_drift",
+    ],
+    "debug_agent": [
+        "read_file", "grep_code", "find_interface", "find_usages", "scan_directory",
+        "git_log", "detect_patterns",
+    ],
+    "report_agent": [
+        "read_file", "scan_directory", "list_files", "grep_code", "detect_risks",
+        "check_version_drift", "parse_interfaces",
+    ],
+    "meta_agent": ["read_file", "scan_directory"],
+}

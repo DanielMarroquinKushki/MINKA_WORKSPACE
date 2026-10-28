@@ -1,0 +1,8 @@
+# Dependencias de desarrollo (NO runtime).
+# Instalar: ./.venv/bin/pip install -r requirements-dev.txt
+ruff>=0.6.0
+pytest>=8.0.0
+pytest-cov>=5.0.0
+pre-commit>=3.7.0
+deepeval>=4.0.0  # evals de regresión de calidad (Nivel 5); G-Eval degrada a None si falta
+aiobotocore>=2.13.0  # requerido por el juez Bedrock de DeepEval (AmazonBedrockModel)

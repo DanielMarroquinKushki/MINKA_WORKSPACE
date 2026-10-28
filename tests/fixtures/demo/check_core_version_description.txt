@@ -1,0 +1,1 @@
+Versión de demo-core y de Go en el go.mod.

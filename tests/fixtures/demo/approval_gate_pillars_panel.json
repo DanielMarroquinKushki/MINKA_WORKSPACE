@@ -1,0 +1,9 @@
+{
+  "renderable": "[bold]Recuerda validar este cambio bajo los 2 pilares:[/bold]\n  01 Simplicidad — ¿es la solución más simple?\n  02 Claridad    — ¿se entiende sin preguntar?",
+  "title": "[cyan]Pilares Demo[/cyan]",
+  "border_style": "cyan",
+  "padding": [
+    0,
+    1
+  ]
+}

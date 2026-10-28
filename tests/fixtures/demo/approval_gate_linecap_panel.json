@@ -1,0 +1,5 @@
+{
+  "renderable": "[bold yellow]⚠️ Cambio grande detectado[/bold yellow]\nLíneas modificadas: 201 (límite recomendado: 150)\nConsidera dividir este cambio en pasos más pequeños.\nPilar Simplicidad: divide el cambio.",
+  "title": "[yellow]Line Cap[/yellow]",
+  "border_style": "yellow"
+}

@@ -1,0 +1,24 @@
+# Architecture Decision Records (ADR) — [PROYECTO]
+
+> Registro de decisiones arquitectónicas del equipo. Formato: contexto → decisión →
+> consecuencias. Claude Code agrega aquí las decisiones importantes que surjan durante
+> el trabajo, sin que el dev lo pida (ver "Sistema de memoria" en el CLAUDE.md del
+> workspace). El meta_agent (Nivel 6) también registra aquí sus cambios a prompts.
+>
+> Al crear el proyecto: renombra `decisions_log.md.example → decisions_log.md` y borra
+> el ejemplo de abajo.
+
+---
+
+## ADR-001 — [Título de la decisión]
+**Fecha:** YYYY-MM-DD
+**Estado:** Aceptada | Propuesta | Reemplazada por ADR-XXX
+
+**Contexto:**
+[Qué problema, restricción o disyuntiva motivó la decisión.]
+
+**Decisión:**
+[Qué se decidió hacer, en concreto.]
+
+**Consecuencias:**
+- [Efecto, trade-off o deuda técnica que introduce la decisión.]

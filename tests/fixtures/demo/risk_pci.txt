@@ -1,0 +1,2 @@
+[CRÍTICA] HARDCODED_TOKEN — <ROOT>/svc.go:4 — Llave de ejemplo del demo
+[CRÍTICA] PRIVATE_KEY — <ROOT>/svc.go:7 — Llave privada embebida en el repo (PCI-DSS)
