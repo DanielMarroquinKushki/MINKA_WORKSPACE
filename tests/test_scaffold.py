@@ -1,5 +1,4 @@
 """Tests de create_project — aislados en un workspace temporal (no toca el árbol real)."""
-import shutil
 from pathlib import Path
 
 import pytest
@@ -15,10 +14,9 @@ from core.project_scaffold import (
 
 @pytest.fixture
 def fake_workspace(tmp_path, monkeypatch):
-    """Copia el _template real a un workspace temporal y apunta config.PROJECTS_DIR ahí."""
+    """Apunta config.PROJECTS_DIR a un workspace temporal (la plantilla sale de TEMPLATE_DIR)."""
     fake_projects = tmp_path / "dev-agent" / "projects"
     fake_projects.mkdir(parents=True)
-    shutil.copytree(Path(config.PROJECTS_DIR) / "_template", fake_projects / "_template")
     monkeypatch.setattr(config, "PROJECTS_DIR", fake_projects)
     return tmp_path
 

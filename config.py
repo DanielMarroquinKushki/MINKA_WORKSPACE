@@ -16,10 +16,22 @@ from pathlib import Path
 # Rutas base
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent
-OUTPUT_DIR = BASE_DIR / "output"
 KNOWLEDGE_DIR = BASE_DIR / "core" / "knowledge"
-# Raíz de los proyectos (projects/<p>/ y _template). Única fuente de esa ruta.
-PROJECTS_DIR = BASE_DIR / "projects"
+# Plantilla de proyecto nuevo: es código del motor, no datos del usuario.
+TEMPLATE_DIR = BASE_DIR / "projects" / "_template"
+
+# Datos del usuario (proyectos, salida, índice RAG), fuera del paquete.
+# Nombre provisional: cambiar SOLO APP_NAME cuando se decida el del paquete.
+# DATA_DIR solo se cambia con la variable de entorno, no con config_local.py:
+# las rutas derivadas se calculan aquí, antes de que config_local se aplique.
+APP_NAME = "motor"
+DATA_DIR_ENV = f"{APP_NAME.upper()}_HOME"
+DATA_DIR = Path(os.getenv(DATA_DIR_ENV) or Path.home() / f".{APP_NAME}").expanduser()
+PROJECTS_DIR = DATA_DIR / "projects"
+OUTPUT_DIR = DATA_DIR / "output"
+# deepeval lee esta variable al importarse; el motor lo importa después
+# (core/evaluator/regression_evals.py). En pytest su plugin va desactivado.
+os.environ.setdefault("DEEPEVAL_CACHE_FOLDER", str(DATA_DIR / ".deepeval"))
 
 # ---------------------------------------------------------------------------
 # Model routing — modelo óptimo por tipo de tarea.
@@ -134,7 +146,7 @@ LINE_CAP = int(os.getenv("LINE_CAP", "150"))
 # RAG — Nivel 4 (stub por ahora)
 # ---------------------------------------------------------------------------
 RAG_ENABLED = False
-CHROMA_PATH = BASE_DIR / ".chromadb"
+CHROMA_PATH = DATA_DIR / ".chromadb"
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 # Reranking (two-stage retrieval): reordena los candidatos de ChromaDB con un

@@ -80,7 +80,7 @@ def create_project(
 
     root = workspace_root or Path(config.BASE_DIR).parent
     projects_dir = Path(config.PROJECTS_DIR)
-    template_dir = projects_dir / "_template"
+    template_dir = Path(config.TEMPLATE_DIR)
     project_dir = projects_dir / name
 
     if project_dir.exists():
