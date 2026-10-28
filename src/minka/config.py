@@ -212,7 +212,8 @@ PROMPT_OPTIMIZATION_ENABLED = False
 # LLM_BACKEND controla qué cliente usan los agentes:
 #   - "bedrock"           → anthropic.AnthropicBedrock (vía perfil SSO)
 #   - "anthropic" / vacío → anthropic.Anthropic() (API key directa, default)
-# Si LLM_BACKEND no está seteado pero SÍ existe AWS_PROFILE, se asume bedrock.
+# Si LLM_BACKEND no está seteado pero SÍ hay AWS_PROFILE, se infiere bedrock y
+# build_llm_client avisa (config_loader decide tras el merge con config_local).
 AWS_PROFILE = os.getenv("AWS_PROFILE", "bedrock")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
@@ -227,6 +228,13 @@ else:
 
 # Minutos antes de expirar con los que se considera un token "por vencer".
 BEDROCK_REFRESH_BEFORE_MINUTES = 5
+# Tope para `aws sso login` (espera a que completes el login en el navegador).
+SSO_LOGIN_TIMEOUT_SECONDS = 300
+# Cliente Bedrock: lectura y conexión (httpx.Timeout) y reintentos del SDK.
+# La conexión también se usa como timeout de la validación STS.
+BEDROCK_TIMEOUT_SECONDS = 180
+BEDROCK_CONNECT_TIMEOUT_SECONDS = 10
+BEDROCK_MAX_RETRIES = 2
 
 # Prefijo de proveedor para los model IDs en Bedrock. Los modelos on-demand se
 # invocan vía inference profile regional: "us.anthropic.", "eu.anthropic." o
@@ -241,15 +249,20 @@ _aws_session = None
 
 
 def get_aws_session():
-    """Devuelve el AWSSessionManager compartido (lo crea la primera vez).
-    Solo se llama cuando USE_BEDROCK es True."""
+    """AWSSessionManager compartido para el perfil y la región EFECTIVOS
+    (config_local > entorno > "bedrock", resueltos por config_loader). Se recrea
+    si cambian (p. ej. tras set_project). Solo se llama cuando USE_BEDROCK es True."""
     global _aws_session
-    if _aws_session is None:
-        from minka.aws_session_manager import AWSSessionManager
+    from minka.aws_session_manager import AWSSessionManager
+    from minka.config_loader import config as cfg
 
+    key = (cfg.AWS_PROFILE, cfg.AWS_REGION)
+    if _aws_session is None or (_aws_session.profile_name, _aws_session.region) != key:
         _aws_session = AWSSessionManager(
-            profile_name=AWS_PROFILE,
-            region=AWS_REGION,
-            refresh_before_minutes=BEDROCK_REFRESH_BEFORE_MINUTES,
+            profile_name=cfg.AWS_PROFILE,
+            region=cfg.AWS_REGION,
+            refresh_before_minutes=cfg.BEDROCK_REFRESH_BEFORE_MINUTES,
+            login_timeout_seconds=cfg.SSO_LOGIN_TIMEOUT_SECONDS,
+            connect_timeout_seconds=cfg.BEDROCK_CONNECT_TIMEOUT_SECONDS,
         )
     return _aws_session

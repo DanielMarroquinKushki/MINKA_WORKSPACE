@@ -104,15 +104,12 @@ def run_evaluation(project: str, use_geval: bool = True) -> dict:
     if not cases:
         return {"error": f"Sin golden set para '{project}' (projects/{project}/evals/cases.json)."}
 
-    # Gate de sesión AWS NO bloqueante (solo Bedrock): si no hay sesión válida,
-    # falla rápido con instrucciones — no pausa esperando (a diferencia del
-    # orchestrator, que sí espera para tareas largas).
+    # Gate de sesión AWS (solo Bedrock): login solo si el token venció y hay TTY;
+    # si no, aborta con el mensaje (sin navegador ni esperas).
     if getattr(config, "USE_BEDROCK", False):
-        if not config.get_aws_session().sso_token_status().get("valid"):
-            return {
-                "error": "Sesión AWS expirada. Renueva con: "
-                f"aws sso login --profile {config.AWS_PROFILE} y reintenta."
-            }
+        ok, msg = config.get_aws_session().ensure_sso_login()
+        if not ok:
+            return {"error": msg}
 
     from minka.core.orchestrator.orchestrator import Orchestrator
 

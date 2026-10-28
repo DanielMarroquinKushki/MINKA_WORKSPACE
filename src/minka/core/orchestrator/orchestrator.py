@@ -162,15 +162,13 @@ class Orchestrator:
         self.last_run_ok = True
         self.last_usage = {"per_agent": [], "totals": {}}
 
-        # Antes de una tarea larga: garantiza sesión AWS válida (solo Bedrock).
-        # La Capa 3 (pausa elegante) vive dentro de ensure_valid_session().
+        # Antes de una tarea: sesión AWS utilizable (solo Bedrock). Login solo si
+        # el token venció; sin TTY o sin red devuelve el mensaje, sin esperar.
         if getattr(config, "USE_BEDROCK", False):
-            if not config.get_aws_session().ensure_valid_session():
+            ok, msg = config.get_aws_session().ensure_sso_login()
+            if not ok:
                 self.last_run_ok = False
-                return (
-                    "Sesión AWS expirada. Renueva con: "
-                    f"aws sso login --profile {config.AWS_PROFILE}"
-                )
+                return msg
 
         # Agente forzado: un solo paso, sin planner ni checkpoint/resume.
         if forced_agent:

@@ -13,6 +13,7 @@ Correcciones frente al prompt original:
 """
 
 import json
+import sys
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
@@ -30,6 +31,22 @@ from minka.core.tools.registry import ToolRegistry
 console = Console()
 
 
+_backend_warned = False
+
+
+def _warn_if_backend_inferred() -> None:
+    """Avisa una vez por proceso si Bedrock se infirió de AWS_PROFILE sin LLM_BACKEND."""
+    global _backend_warned
+    if getattr(config, "BACKEND_INFERRED", False) and not _backend_warned:
+        _backend_warned = True
+        print(
+            f"⚠️ LLM_BACKEND no está definido: se usa Bedrock porque hay AWS_PROFILE "
+            f"({config.AWS_PROFILE}). Define LLM_BACKEND=bedrock o LLM_BACKEND=anthropic "
+            "en <DATA_DIR>/.env o en config_local.py.",
+            file=sys.stderr,
+        )
+
+
 def build_llm_client():
     """Crea el cliente Anthropic según el backend configurado.
 
@@ -41,12 +58,12 @@ def build_llm_client():
     que los agentes sin duplicar la lógica.
     """
     if getattr(config, "USE_BEDROCK", False):
+        from minka.aws_session_manager import build_anthropic_bedrock
+
+        _warn_if_backend_inferred()
         # Inicializa el session manager (lazy) para dejar la sesión lista.
         config.get_aws_session()
-        return anthropic.AnthropicBedrock(
-            aws_profile=config.AWS_PROFILE,
-            aws_region=config.AWS_REGION,
-        )
+        return build_anthropic_bedrock(config)
     return anthropic.Anthropic()
 
 

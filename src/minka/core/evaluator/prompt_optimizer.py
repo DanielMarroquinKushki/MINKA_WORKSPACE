@@ -74,13 +74,12 @@ class PromptOptimizer:
         Corre los evals del agente y propone un prompt mejorado (ADR) vía meta-LLM.
         Requiere sesión LLM. NO escribe nada — la decisión final es del dev.
         """
-        # Gate de sesión AWS no bloqueante (solo Bedrock).
+        # Gate de sesión AWS (solo Bedrock): login solo si el token venció y hay
+        # TTY; si no, aborta con el mensaje (sin navegador ni esperas).
         if getattr(self.config, "USE_BEDROCK", False):
-            if not self.config.get_aws_session().sso_token_status().get("valid"):
-                return {
-                    "error": "Sesión AWS expirada. Renueva con: "
-                    f"aws sso login --profile {self.config.AWS_PROFILE} y reintenta."
-                }
+            ok, msg = self.config.get_aws_session().ensure_sso_login()
+            if not ok:
+                return {"error": msg}
 
         cases, feedback = self._collect_feedback(agent_name, project)
         if not cases:

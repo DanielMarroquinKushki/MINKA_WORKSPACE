@@ -23,7 +23,7 @@ import subprocess
 import typer
 from rich.console import Console
 
-from minka.aws_session_manager import AWSSessionManager
+from minka.aws_session_manager import AWSSessionManager, build_anthropic_bedrock
 from minka.config_loader import config
 
 app = typer.Typer(add_completion=False)
@@ -152,9 +152,7 @@ def _run_verify() -> None:
 
     # 5 — Cliente Bedrock construible.
     try:
-        import anthropic
-
-        client = anthropic.AnthropicBedrock(aws_profile=PROFILE, aws_region=REGION)
+        client = build_anthropic_bedrock(config)
         console.print("[green]✓[/green] Cliente Bedrock listo")
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]✗[/red] No se pudo crear el cliente Bedrock: {exc}")

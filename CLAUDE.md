@@ -119,9 +119,11 @@ prefijo regional (`us.` / `eu.` / `apac.`) — un ID sin él da **400
 **Renovación de sesión (3 capas):**
 - **Capa 1+2** (auto-refresh de credenciales + relectura del token SSO del cache)
   las hace **botocore** solo al crear la `boto3.Session`. No se reimplementan.
-- **Capa 3** (pausa elegante) es propia: `AWSSessionManager.ensure_valid_session()`
-  muestra instrucciones, espera hasta 10 min (polling 30s) y retoma si renuevas.
-  El orchestrator la invoca antes de cada tarea larga (solo en modo Bedrock).
+- **Capa 3** es propia: `AWSSessionManager.ensure_sso_login()` → `(ok, mensaje)`.
+  Token vigente: sin red. Vencido: valida con STS (timeouts cortos). Solo ante un
+  error de token lanza `aws sso login --profile <AWS_PROFILE>` (con TTY y
+  `SSO_LOGIN_TIMEOUT_SECONDS`); sin TTY o sin red devuelve el mensaje, sin esperar.
+  El orchestrator la invoca antes de cada tarea (solo en modo Bedrock).
 
 ---
 
@@ -173,7 +175,7 @@ aws sso login --profile bedrock
 ## Convenciones de código
 
 - **Nunca lanzar excepciones de infraestructura (AWS, red) hacia el agente.**
-  Las funciones de sesión retornan `bool` (`ensure_valid_session`) o `None`
+  Las funciones de sesión retornan `(bool, mensaje)` (`ensure_sso_login`) o `None`
   (`sso_token_status`), nunca propagan `try/catch` de boto3 hacia arriba. El
   agente/orchestrator reacciona a valores, no atrapa excepciones de AWS.
 - **Retornar `bool` para "¿puedo continuar?".** El orchestrator solo pregunta

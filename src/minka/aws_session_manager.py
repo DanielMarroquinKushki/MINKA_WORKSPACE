@@ -18,17 +18,18 @@ viva con 3 capas de renovación, en orden de preferencia:
     sso.get_role_credentials() SIN abrir el browser. Sucede de forma
     transparente dentro de get_caller_identity() / cualquier llamada AWS.
 
-  Capa 3 — Pausa elegante  (LO QUE SÍ construimos aquí)
-    Si el token SSO también expiró (las dos capas anteriores fallan), NO
-    crasheamos el agente. Mostramos instrucciones, esperamos hasta 10 minutos
-    verificando cada 30s, y retomamos en cuanto el usuario renueve. Si pasa el
-    tiempo, salimos limpiamente.
+  Capa 3 — Login solo si hace falta  (LO QUE SÍ construimos aquí)
+    ensure_sso_login(): si el token del perfil sigue vigente no toca la red.
+    Si venció, valida con STS (timeouts cortos; botocore renueva con el
+    refreshToken si puede). Solo ante un error de TOKEN lanza
+    `aws sso login --profile <perfil>` (con TTY y timeout); sin TTY devuelve
+    la instrucción. Un error de red no abre el navegador.
 
 Uso:
     mgr = AWSSessionManager(profile_name="bedrock", region="us-east-1")
     mgr.get_bedrock_client()        # cliente bedrock-runtime listo para usar
     mgr.get_client("s3")            # cualquier cliente AWS
-    mgr.ensure_valid_session()      # verifica antes de una tarea larga → bool
+    ok, msg = mgr.ensure_sso_login()  # antes de una tarea: (bool, mensaje)
 
 Seguridad:
     - No hardcodea credenciales, tokens ni secrets.
@@ -38,18 +39,71 @@ Seguridad:
 from __future__ import annotations
 
 import json
-import time
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 import boto3
+from botocore.config import Config
+from botocore.exceptions import (
+    ClientError,
+    ConnectionClosedError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+    SSOError,
+    SSOTokenLoadError,
+    TokenRetrievalError,
+    UnauthorizedSSOTokenError,
+)
 from rich.console import Console
 
 console = Console()
 
 # Directorio donde el AWS CLI cachea el token SSO (accessToken vigente).
 _SSO_CACHE_DIR = Path.home() / ".aws" / "sso" / "cache"
+
+# Errores que significan "el token SSO no sirve" (solo estos lanzan el login).
+_TOKEN_ERRORS = (SSOTokenLoadError, UnauthorizedSSOTokenError, TokenRetrievalError, SSOError)
+_TOKEN_ERROR_CODES = {"UnauthorizedException", "ExpiredToken", "ExpiredTokenException"}
+# Errores de red: nunca abren el navegador.
+_NETWORK_ERRORS = (
+    EndpointConnectionError,
+    ConnectTimeoutError,
+    ReadTimeoutError,
+    ConnectionClosedError,
+)
+
+
+def _classify_error(exc: Exception) -> str:
+    """"token", "network" u "other" para una excepción de la validación STS."""
+    if isinstance(exc, _NETWORK_ERRORS):
+        return "network"
+    if isinstance(exc, _TOKEN_ERRORS):
+        return "token"
+    if isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code") in _TOKEN_ERROR_CODES:
+        return "token"
+    return "other"
+
+
+def _is_interactive() -> bool:
+    """True si hay una terminal para el login (stdin y stdout son TTY)."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def build_anthropic_bedrock(cfg) -> Any:
+    """Cliente AnthropicBedrock con perfil, región y timeouts de `cfg` (único lugar)."""
+    import anthropic
+    import httpx
+
+    return anthropic.AnthropicBedrock(
+        aws_profile=cfg.AWS_PROFILE,
+        aws_region=cfg.AWS_REGION,
+        timeout=httpx.Timeout(cfg.BEDROCK_TIMEOUT_SECONDS, connect=cfg.BEDROCK_CONNECT_TIMEOUT_SECONDS),
+        max_retries=cfg.BEDROCK_MAX_RETRIES,
+    )
 
 
 class AWSSessionManager:
@@ -61,12 +115,16 @@ class AWSSessionManager:
         profile_name: str = "bedrock",
         region: str = "us-east-1",
         refresh_before_minutes: int = 5,
+        login_timeout_seconds: int = 300,
+        connect_timeout_seconds: int = 10,
     ) -> None:
         self.profile_name = profile_name
         self.region = region
         # Margen (min) con el que consideramos que un token está "por vencer".
         # botocore renueva solo; esto es informativo para sso_token_status().
         self.refresh_before_minutes = refresh_before_minutes
+        self.login_timeout_seconds = login_timeout_seconds
+        self.connect_timeout_seconds = connect_timeout_seconds
 
         self._session: Optional[boto3.Session] = None
         self._clients: dict[str, Any] = {}
@@ -95,61 +153,78 @@ class AWSSessionManager:
 
     def _reset(self) -> None:
         """Descarta la sesión y los clientes cacheados. Se usa tras un
-        `aws sso login` en otra terminal para forzar la relectura del cache."""
+        `aws sso login` para forzar la relectura del cache."""
         self._session = None
         self._clients.clear()
 
     # -- Validación / Capa 3 ---------------------------------------------------
-    def _is_session_valid(self) -> bool:
-        """True si una llamada real a AWS funciona. Esto dispara — de forma
-        transparente — las Capas 1 y 2 de botocore (refresh de rol y relectura
-        del token SSO del cache). Si el token SSO ya expiró, lanza excepción."""
-        try:
-            self.get_client("sts").get_caller_identity()
-            return True
-        except Exception:  # noqa: BLE001 — cualquier fallo = sesión no válida
-            return False
+    def _sts_check(self) -> None:
+        """Llamada mínima a STS con timeouts cortos y un solo intento. Lanza la
+        excepción de botocore si falla (botocore renueva el token si puede)."""
+        cfg = Config(
+            connect_timeout=self.connect_timeout_seconds,
+            read_timeout=self.connect_timeout_seconds,
+            retries={"max_attempts": 1},
+        )
+        self.session.client("sts", region_name=self.region, config=cfg).get_caller_identity()
 
-    def ensure_valid_session(
-        self,
-        max_wait_minutes: int = 10,
-        poll_interval_seconds: int = 30,
-    ) -> bool:
-        """Garantiza una sesión utilizable antes de una tarea larga.
+    def ensure_sso_login(self) -> tuple[bool, str]:
+        """(True, "") si la sesión sirve; (False, mensaje) si no. Nunca lanza.
 
-        Retorna True si la sesión es válida (ya lo era, o el usuario renovó
-        dentro de la ventana de espera). Retorna False si tras `max_wait_minutes`
-        el token SSO sigue expirado. Nunca lanza excepción: no crashea el agente.
+        Token vigente → sin red. Vencido → STS. Solo un error de token lanza
+        `aws sso login` (con TTY); sin TTY o con error de red, devuelve el mensaje.
         """
-        if self._is_session_valid():
-            return True
+        status = self.sso_token_status()
+        minutes = status.get("minutes_remaining")
+        if status.get("valid") and minutes is not None and minutes > self.refresh_before_minutes:
+            return True, ""
 
-        # Capa 3 — pausa elegante.
+        login_cmd = f"aws sso login --profile {self.profile_name}"
+        try:
+            self._sts_check()
+            return True, ""
+        except Exception as exc:  # noqa: BLE001 — se clasifica abajo
+            error = exc
+
+        kind = _classify_error(error)
+        if kind == "network":
+            return False, (
+                f"Sin conexión con AWS ({type(error).__name__}). Revisa la red o la VPN "
+                "y reintenta; no se abrió el navegador."
+            )
+        if kind == "other":
+            return False, (
+                f"No se pudo validar la sesión AWS del perfil '{self.profile_name}' "
+                f"({type(error).__name__}). Revisa ~/.aws/config o corre: minka-sso --verify"
+            )
+        if not _is_interactive():
+            return False, f"Sesión AWS SSO vencida. Renueva con: {login_cmd}"
+
         console.print(
-            "\n[bold yellow]⚠  Sesión AWS SSO expirada.[/bold yellow]\n"
-            "Abre otra terminal y ejecuta:\n"
-            f"    [cyan]aws sso login --profile {self.profile_name}[/cyan]\n"
-            f"Esperaré hasta {max_wait_minutes} min "
-            f"(revisando cada {poll_interval_seconds}s)…"
+            f"[bold yellow]Sesión AWS SSO vencida.[/bold yellow] Ejecutando: [cyan]{login_cmd}[/cyan]"
         )
+        try:
+            subprocess.run(
+                ["aws", "sso", "login", "--profile", self.profile_name],
+                check=True,
+                timeout=self.login_timeout_seconds,
+            )
+        except FileNotFoundError:
+            return False, f"No se encontró la CLI 'aws'. Instálala y ejecuta: {login_cmd}"
+        except subprocess.TimeoutExpired:
+            return False, (
+                f"`{login_cmd}` no terminó en {self.login_timeout_seconds} s. "
+                "Reintenta cuando puedas completar el login en el navegador."
+            )
+        except subprocess.CalledProcessError as exc:
+            return False, f"`{login_cmd}` falló (código {exc.returncode})."
 
-        deadline = time.monotonic() + max_wait_minutes * 60
-        while time.monotonic() < deadline:
-            time.sleep(poll_interval_seconds)
-            # Relee el cache SSO desde cero (por si acabas de hacer login).
-            self._reset()
-            if self._is_session_valid():
-                console.print("[bold green]✓ Sesión renovada. Retomando.[/bold green]\n")
-                return True
-            restante = int((deadline - time.monotonic()) / 60)
-            console.print(f"  [dim]…sigo esperando (~{max(restante, 0)} min restantes)[/dim]")
-
-        console.print(
-            "\n[bold red]✗ No se renovó la sesión a tiempo.[/bold red]\n"
-            f"Cuando puedas, ejecuta: [cyan]aws sso login --profile {self.profile_name}[/cyan]\n"
-            "y vuelve a lanzar la tarea.\n"
-        )
-        return False
+        self._reset()
+        try:
+            self._sts_check()
+        except Exception as exc:  # noqa: BLE001
+            return False, f"Tras el login la sesión sigue sin validar ({type(exc).__name__})."
+        return True, "Sesión AWS renovada."
 
     # -- Estado del token SSO --------------------------------------------------
     def sso_token_status(self) -> dict[str, Any]:
@@ -202,13 +277,11 @@ class AWSSessionManager:
         return account_id, role_name, start_url
 
     def _cached_token_expiry(self, start_url: Optional[str]) -> tuple[Optional[str], Optional[int]]:
-        """Busca en ~/.aws/sso/cache/*.json el token con accessToken vigente.
-        Prefiere el que coincide con `start_url`. Devuelve (expires_at_iso,
-        minutos_restantes) o (None, None) si no hay token válido."""
-        if not _SSO_CACHE_DIR.is_dir():
+        """Busca en ~/.aws/sso/cache/*.json el token cuyo startUrl es el del perfil.
+        Devuelve (expires_at_iso, minutos_restantes) o (None, None) si no hay."""
+        if not start_url or not _SSO_CACHE_DIR.is_dir():
             return None, None
 
-        best: tuple[Optional[str], Optional[int]] = (None, None)
         for cache_file in _SSO_CACHE_DIR.glob("*.json"):
             try:
                 data = json.loads(cache_file.read_text(encoding="utf-8"))
@@ -225,15 +298,11 @@ class AWSSessionManager:
             minutes = int((expires_at - datetime.now(timezone.utc)).total_seconds() / 60)
             iso = expires_at.isoformat()
 
-            # Coincidencia exacta con el start_url del perfil → resultado final.
+            # Solo cuenta el token del start_url de ESTE perfil (sin fallback a otros).
             if start_url and data.get("startUrl") == start_url:
                 return iso, minutes
 
-            # Si no, nos quedamos con el token de mayor vigencia como fallback.
-            if best[1] is None or minutes > best[1]:
-                best = (iso, minutes)
-
-        return best
+        return None, None
 
     @staticmethod
     def _parse_expiry(raw: str) -> Optional[datetime]:

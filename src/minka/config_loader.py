@@ -23,6 +23,7 @@ Cambio de proyecto en runtime (main.py --project X):
 """
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -104,10 +105,17 @@ def load_config(project: str | None = None, projects_dir: Path | None = None) ->
     values["PROJECTS_DIR"] = projects_dir
 
     # USE_BEDROCK se deriva de LLM_BACKEND DESPUÉS del merge: si config_local
-    # fija el backend, deja de depender de variables del shell.
+    # fija el backend, deja de depender de variables del shell. Sin LLM_BACKEND,
+    # se infiere Bedrock si hay AWS_PROFILE (config_local o entorno) y se marca
+    # BACKEND_INFERRED para que build_llm_client lo avise.
     backend = (values.get("LLM_BACKEND") or "").strip().lower()
     if backend:
         values["USE_BEDROCK"] = backend == "bedrock"
+        values["BACKEND_INFERRED"] = False
+    else:
+        inferred = bool(local_values.get("AWS_PROFILE") or os.getenv("AWS_PROFILE"))
+        values["USE_BEDROCK"] = inferred
+        values["BACKEND_INFERRED"] = inferred
 
     ns = SimpleNamespace(**values)
     ns.ACTIVE_PROJECT = project  # None = sin proyecto (defaults globales)
