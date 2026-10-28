@@ -61,6 +61,29 @@ def _title(name: str) -> str:
     return name.replace("-", " ").title()
 
 
+# Plantillas de datos del usuario que viajan en el paquete → destino en DATA_DIR.
+_INIT_FILES = {
+    "config.example.py": "config_local.py",
+    ".env.example": ".env",
+}
+
+
+def init_data_dir() -> dict:
+    """Copia config.example.py y .env.example a config.DATA_DIR (config_local.py, .env).
+    Nunca sobrescribe. Devuelve {"data_dir", "created": [...], "skipped": [...]}."""
+    data_dir = Path(config.DATA_DIR)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    created, skipped = [], []
+    for src_name, dst_name in _INIT_FILES.items():
+        dst = data_dir / dst_name
+        if dst.exists():
+            skipped.append(str(dst))
+            continue
+        shutil.copyfile(Path(config.BASE_DIR) / src_name, dst)
+        created.append(str(dst))
+    return {"data_dir": str(data_dir), "created": created, "skipped": skipped}
+
+
 def create_project(
     name: str,
     core_module: str | None = None,

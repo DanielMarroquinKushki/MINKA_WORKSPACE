@@ -3,6 +3,7 @@
 import sys
 
 from cincha import config_loader
+from cincha.core.prompt_loader import load_system_prompt
 
 
 def test_config_local_desde_data_dir(tmp_path, monkeypatch):
@@ -35,3 +36,17 @@ def test_config_local_ignora_claves_bloqueadas(tmp_path, capsys):
     err = capsys.readouterr().err
     for key in ("DATA_DIR", "DATA_DIR_ENV", "APP_NAME"):
         assert f"se ignora {key};" in err
+
+
+def test_carga_por_ruta_no_deja_pycache(tmp_path, monkeypatch, demo_global):
+    # Forzar escritura de bytecode (pytest puede correr con -B) para probar que no se genera.
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    (tmp_path / "config_local.py").write_text("AUTONOMY_LEVEL = 4\n", encoding="utf-8")
+    config_loader._load_local_vars(tmp_path)
+    config_loader.load_config("demo", projects_dir=demo_global.PROJECTS_DIR)
+    load_system_prompt("pr_review_agent")
+
+    raiz = demo_global.PROJECTS_DIR.parent
+    assert not list(tmp_path.rglob("__pycache__"))
+    assert not list(raiz.rglob("__pycache__"))
+    assert sys.dont_write_bytecode is False  # se restaura el valor previo

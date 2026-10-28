@@ -1,8 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "dev-agent"
+name = "cincha"
 version = "0.1.0"
-description = "Arnés Global multi-agente para desarrollo asistido por IA sobre múltiples proyectos de software (agnóstico de stack)."
+description = "Arnés multi-agente para desarrollo asistido por IA sobre múltiples proyectos (agnóstico de stack)."
+readme = "README.md"
 requires-python = ">=3.12"
+dependencies = [
+    "anthropic[bedrock]>=0.120.2",
+    "boto3>=1.43.64",
+    "botocore>=1.43.81",
+    "gitpython>=3.1.58",
+    "pathspec>=1.1.1",
+    "rich>=14.3.4",
+    "python-dotenv>=1.2.2",
+    "pydantic>=2.13.4",
+    "typer>=0.27.1",
+    "pygments>=2.20.0",
+]
+
+[project.optional-dependencies]
+rag = ["chromadb>=1.5.9", "sentence-transformers>=6.0.0"]
+memory = ["mem0ai>=2.0.19", "chromadb>=1.5.9"]  # vector_memory.py usa ChromaDB como vector store
+obs = ["langfuse>=4.14.5"]
+dev = [
+    "ruff>=0.16.4",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pre-commit>=4.6.2",
+    "deepeval>=4.2.0",
+    "aiobotocore>=3.9.0",
+]
+
+[project.scripts]
+cincha = "cincha.main:app"
+cincha-sso = "cincha.setup_sso:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cincha"]
 
 [tool.ruff]
 src = ["src", "tests"]

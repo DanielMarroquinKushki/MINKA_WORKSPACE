@@ -33,6 +33,20 @@ from cincha import config as _base
 _LOCKED = ("DATA_DIR", "DATA_DIR_ENV", "APP_NAME")
 
 
+def exec_file_module(name: str, path: Path):
+    """Ejecuta un .py por ruta (sin sys.path ni sys.modules) y SIN escribir __pycache__
+    junto a él: config_local.py y los proyectos viven en los datos del usuario."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    previo = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = previo
+    return module
+
+
 def _uppercase_vars(module) -> dict:
     """Extrae solo las constantes (MAYÚSCULAS) de un módulo."""
     return {
@@ -48,10 +62,7 @@ def _load_project_vars(project: str, projects_dir: Path) -> dict:
     cfg_file = projects_dir / project / "config.py"
     if not cfg_file.is_file():
         raise FileNotFoundError(f"No existe la config del proyecto '{project}': {cfg_file}")
-    spec = importlib.util.spec_from_file_location(f"_project_{project}", cfg_file)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return _uppercase_vars(module)
+    return _uppercase_vars(exec_file_module(f"_project_{project}", cfg_file))
 
 
 def _load_local_vars(data_dir: Path) -> dict:
@@ -60,10 +71,7 @@ def _load_local_vars(data_dir: Path) -> dict:
     f = Path(data_dir) / "config_local.py"
     if not f.is_file():
         return {}
-    spec = importlib.util.spec_from_file_location("_config_local", f)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    values = _uppercase_vars(module)
+    values = _uppercase_vars(exec_file_module("_config_local", f))
     for key in _LOCKED:
         if key in values:
             del values[key]

@@ -4,16 +4,17 @@ dev-agent — punto de entrada.
 Conversación natural en terminal con el orquestador multi-agente.
 
 Uso:
-    python -m cincha.main                      # modo interactivo (chat con historial)
-    python -m cincha.main "analiza los riesgos del repo <alias>"
-    python -m cincha.main "analiza X" --agent architecture      # salta el planner
-    python -m cincha.main "analiza X" --agent report --json-out /tmp/r.json
-    python -m cincha.main --debug              # muestra input/output de cada tool call
-    python -m cincha.main --level 3
-    python -m cincha.main --index-repos        # Nivel 4 (RAG) — indexa código Go
-    python -m cincha.main --index-knowledge    # Nivel 4 (RAG) — indexa .md de knowledge
-    python -m cincha.main --new-project mi-proyecto  # crea el esqueleto de un proyecto nuevo
-    python -m cincha.main --help
+    cincha                      # modo interactivo (chat con historial)
+    cincha "analiza los riesgos del repo <alias>"
+    cincha "analiza X" --agent architecture      # salta el planner
+    cincha "analiza X" --agent report --json-out /tmp/r.json
+    cincha --debug              # muestra input/output de cada tool call
+    cincha --level 3
+    cincha --index-repos        # Nivel 4 (RAG) — indexa código Go
+    cincha --index-knowledge    # Nivel 4 (RAG) — indexa .md de knowledge
+    cincha --init                       # crea config_local.py y .env en el directorio de datos
+    cincha --new-project mi-proyecto  # crea el esqueleto de un proyecto nuevo
+    cincha --help
 
 Comandos del modo interactivo:
     /status  — estado del sistema (sesión AWS, backend, repos, memoria, nivel)
@@ -156,6 +157,11 @@ def main(
         "--index-knowledge",
         help="Nivel 4: indexar .md de knowledge en ChromaDB (knowledge_docs).",
     ),
+    init: bool = typer.Option(
+        False,
+        "--init",
+        help="Crea config_local.py y .env en el directorio de datos (nunca sobrescribe) y sale.",
+    ),
     new_project: bool = typer.Option(
         False,
         "--new-project",
@@ -250,6 +256,17 @@ def main(
 
     # Scaffolding — crea el esqueleto de un proyecto nuevo (Arnés Global).
     # Usa el argumento posicional `task` como nombre; si falta, lo pregunta.
+    if init:
+        from cincha.core.project_scaffold import init_data_dir
+
+        result = init_data_dir()
+        console.print(f"Directorio de datos: {result['data_dir']}")
+        for path in result["created"]:
+            console.print(f"  [green]creado[/green]   {path}")
+        for path in result["skipped"]:
+            console.print(f"  [yellow]ya existe[/yellow] {path} (no se toca)")
+        return
+
     if new_project:
         from cincha.core.project_scaffold import (
             InvalidProjectNameError,
@@ -365,7 +382,7 @@ def main(
         )
         raise typer.Exit(code=2)
     if agent and not task:
-        console.print('[red]--agent requiere una tarea: python -m cincha.main "tarea" --agent <nombre>[/red]')
+        console.print('[red]--agent requiere una tarea: cincha "tarea" --agent <nombre>[/red]')
         raise typer.Exit(code=2)
 
     orchestrator = _make_orchestrator()

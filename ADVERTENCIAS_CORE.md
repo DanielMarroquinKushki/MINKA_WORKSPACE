@@ -28,7 +28,7 @@ Capa 3 — Tu proyecto (modifica libremente)
 
 - [ ] ¿El cambio es realmente necesario o puedo resolverlo en projects/?
 - [ ] ¿Entiendo qué otros proyectos usa este componente?
-- [ ] ¿Tengo una forma de verificar que no rompí nada? (python -m cincha.main --help)
+- [ ] ¿Tengo una forma de verificar que no rompí nada? (cincha --help)
 - [ ] ¿Documenté el cambio en CLAUDE.md y decisions_log.md?
 
 ---
@@ -51,10 +51,10 @@ Capa 3 — Tu proyecto (modifica libremente)
 
 ```bash
 # 1. Verifica que el agente arranca
-python -m cincha.main --help
+cincha --help
 
 # 2. Verifica que el proyecto carga
-python -m cincha.main --project <proyecto>
+cincha --project <proyecto>
 > /status
 
 # 3. Prueba una tarea simple de solo lectura

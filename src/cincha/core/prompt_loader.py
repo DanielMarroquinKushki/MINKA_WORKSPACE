@@ -11,9 +11,8 @@ Convención de nombres (cubre los 6 agentes + orchestrator):
 """
 
 import importlib
-import importlib.util
 
-from cincha.config_loader import config
+from cincha.config_loader import config, exec_file_module
 
 
 def load_system_prompt(agent_name: str) -> str:
@@ -34,10 +33,7 @@ def load_system_prompt(agent_name: str) -> str:
     if project:
         f = config.PROJECTS_DIR / project / "prompts" / f"{module_name}.py"
         if f.is_file():
-            spec = importlib.util.spec_from_file_location(f"_prj_{module_name}", f)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return getattr(mod, var_name)
+            return getattr(exec_file_module(f"_prj_{module_name}", f), var_name)
 
     # Fallback: prompts/ del repo (motor).
     return getattr(importlib.import_module(f"cincha.core.prompts.{module_name}"), var_name)

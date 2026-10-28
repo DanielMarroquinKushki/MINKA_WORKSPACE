@@ -14,13 +14,12 @@ Escalable por niveles de autonomía (3 → 6) mediante flags de configuración.
 uv tool install git+<url-del-repo>
 ```
 
-> **Próximamente:** el empaquetado está en curso; este comando aún no funciona.
-> Mientras tanto, desde un clon del repo: instala `requirements.txt` en un venv,
-> copia `config.example.py` a `<DATA_DIR>/config_local.py` (ver `_app.py`), corre
-> `python -m cincha.setup_sso` y luego `python -m cincha.main`.
+Después: `cincha --init` (crea `config_local.py` y `.env` en `<DATA_DIR>`, sin
+sobrescribir), complétalos, corre `cincha-sso` y luego `cincha`. `<DATA_DIR>` es la
+variable `DATA_DIR_ENV` de `_app.py` o, si no está, `~/.<APP_NAME>/`.
 
-> Nivel 4 (RAG): `pip install chromadb`, pon `RAG_ENABLED=True` y luego
-> `python -m cincha.main --index-repos`.
+> Nivel 4 (RAG): instala con el extra (`uv tool install 'cincha[rag] @ git+<url-del-repo>'`), pon `RAG_ENABLED=True` y luego
+> `cincha --index-repos`.
 
 ---
 
@@ -29,7 +28,7 @@ uv tool install git+<url-del-repo>
 ### Iniciar el agente
 
 ```bash
-python -m cincha.main   # desde el clon del repo, con el venv activo y `PYTHONPATH=src` hasta que el paquete sea instalable
+cincha
 ```
 
 ### Si la sesión AWS expira (máximo una vez por jornada)
@@ -50,10 +49,10 @@ Aprueba en el browser. El agente retoma automáticamente — no lo reinicies.
 ### Verificar que todo está OK
 
 ```bash
-python -m cincha.setup_sso --verify
+cincha-sso --verify
 ```
 
-Debe mostrar todo `✓`. Si algo falla, revisa que el venv esté activo.
+Debe mostrar todo `✓`.
 
 ### Cambiar entre modo Bedrock y API directa
 
@@ -72,8 +71,8 @@ una API key de Anthropic.
 
 Configura tu perfil SSO una sola vez:
 ```bash
-python -m cincha.setup_sso
-python -m cincha.setup_sso --verify
+cincha-sso
+cincha-sso --verify
 ```
 
 El agente renueva la sesión automáticamente (botocore renueva las credenciales
@@ -103,9 +102,9 @@ regional `us.anthropic.` automáticamente en modo Bedrock (configurable con
 ## Uso
 
 ```bash
-python -m cincha.main                                  # modo interactivo (español)
-python -m cincha.main "analiza los riesgos del repo <alias>"
-python -m cincha.main --no-llm-planner "genera reporte de infraestructura"  # routing offline
+cincha                                  # modo interactivo (español)
+cincha "analiza los riesgos del repo <alias>"
+cincha --no-llm-planner "genera reporte de infraestructura"  # routing offline
 ```
 
 ### Ejemplos de pedidos
