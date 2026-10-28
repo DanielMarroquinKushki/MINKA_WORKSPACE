@@ -17,7 +17,7 @@ No modificar sin discusión del equipo.
 Sigue los 6 pasos de `projects/_template/README.md`.
 
 ## Para mejorar el motor (core/)
-1. Documenta el problema en `active-context/workspace.md`
+1. Documenta el problema en `<DATA_DIR>/active-context/workspace.md`
 2. Propón el cambio en sesión dedicada con Claude Code
 3. Un cambio a la vez con verificación entre cada uno
 4. Documenta la decisión en `CLAUDE.md` y `decisions_log.md`

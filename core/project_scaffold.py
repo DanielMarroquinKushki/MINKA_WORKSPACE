@@ -5,8 +5,8 @@ Lógica pura y testeable: create_project() no imprime ni pregunta nada; solo
 copia el _template, renombra los .example, crea el active-context y devuelve un
 resumen. La capa interactiva (preguntas/prints) vive en main.py (--new-project).
 
-Todo relativo a la raíz del workspace (config.BASE_DIR.parent) — sin rutas
-hardcodeadas, funciona para cualquier usuario/máquina.
+Datos en config.DATA_DIR (proyectos y active-context); plantilla en
+config.TEMPLATE_DIR — sin rutas hardcodeadas.
 """
 
 import re
@@ -64,7 +64,6 @@ def _title(name: str) -> str:
 def create_project(
     name: str,
     core_module: str | None = None,
-    workspace_root: Path | None = None,
 ) -> dict:
     """
     Crea el esqueleto de un proyecto nuevo desde projects/_template.
@@ -78,7 +77,6 @@ def create_project(
     if name == "_template":
         raise InvalidProjectNameError("'_template' es un nombre reservado.")
 
-    root = workspace_root or Path(config.BASE_DIR).parent
     projects_dir = Path(config.PROJECTS_DIR)
     template_dir = Path(config.TEMPLATE_DIR)
     project_dir = projects_dir / name
@@ -98,7 +96,7 @@ def create_project(
             example_path.rename(project_dir / real_rel)
 
     # 3. Crea el active-context (fuente única de corto plazo).
-    active_context_dir = root / "active-context"
+    active_context_dir = Path(config.DATA_DIR) / "active-context"
     active_context_dir.mkdir(parents=True, exist_ok=True)
     active_context = active_context_dir / f"{name}.md"
     if not active_context.exists():
@@ -118,10 +116,8 @@ def create_project(
         "next_steps": [
             f"Completa los parámetros en {project_dir / 'config.py'} "
             "(CORE_MODULE_NAME, PR_CHECKLIST, AGENT_KNOWLEDGE, AGENT_TOOLS).",
-            "Agrega las rutas de repos en config_local.py → REPOS.",
-            f"Crea los symlinks: mkdir -p {root / 'repos' / name} && "
-            f"ln -s [ruta-real]/[repo] {root / 'repos' / name}/[repo]",
-            f"Arranca: ./agent --project {name}",
+            f"Agrega las rutas de repos en {Path(config.DATA_DIR) / 'config_local.py'} → REPOS.",
+            f"Arranca: {config.APP_NAME} --project {name}",
         ],
     }
 

@@ -1,8 +1,9 @@
 """
 config.example.py — Plantilla para el equipo.
 
-Copia este archivo a `config_local.py` y completa TUS rutas de repos:
-    cp config.example.py config_local.py
+Copia este archivo a `<DATA_DIR>/config_local.py` y completa TUS rutas de repos
+(<DATA_DIR> = la variable DATA_DIR_ENV de _app.py o, si no está, ~/.<APP_NAME>/):
+    cp config.example.py <DATA_DIR>/config_local.py
 
 `config_local.py` está en .gitignore — no lo commitees.
 Solo define las constantes que quieras sobreescribir; el resto se hereda

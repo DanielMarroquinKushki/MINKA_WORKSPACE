@@ -4,8 +4,6 @@ Sistema multi-agente de IA para desarrollo de software.
 Analiza, revisa y modifica código respetando los estándares
 técnicos y culturales del equipo.
 
-**Para empezar:** lee `ONBOARDING.md` en la raíz del workspace.
-
 Escalable por niveles de autonomía (3 → 6) mediante flags de configuración.
 
 ---
@@ -13,27 +11,13 @@ Escalable por niveles de autonomía (3 → 6) mediante flags de configuración.
 ## Instalación
 
 ```bash
-# 1. Clonar el agente
-git clone <repo-dev-agent>
-cd dev-agent
-
-# 2. Instalar dependencias (idealmente en un venv)
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# 3. Configurar tus rutas locales de repos
-cp config.example.py config_local.py
-#   edita config_local.py con TUS rutas (config_local.py está en .gitignore)
-
-# 4. Autenticación AWS SSO (ver sección "Autenticación" más abajo)
-python setup_sso.py
-
-# 5. Verificar
-python main.py --help
-
-# 6. Usar
-python main.py
+uv tool install git+<url-del-repo>
 ```
+
+> **Próximamente:** el empaquetado está en curso; este comando aún no funciona.
+> Mientras tanto, desde un clon del repo: instala `requirements.txt` en un venv,
+> copia `config.example.py` a `<DATA_DIR>/config_local.py` (ver `_app.py`), corre
+> `python setup_sso.py` y luego `python main.py`.
 
 > Nivel 4 (RAG): `pip install chromadb`, pon `RAG_ENABLED=True` y luego
 > `python main.py --index-repos`.
@@ -45,9 +29,7 @@ python main.py
 ### Iniciar el agente
 
 ```bash
-cd [ruta-workspace]/dev-agent
-source .venv/bin/activate
-python main.py
+python main.py   # desde el clon del repo, con el venv activo
 ```
 
 ### Si la sesión AWS expira (máximo una vez por jornada)
@@ -83,36 +65,6 @@ export AWS_PROFILE=bedrock
 export LLM_BACKEND=anthropic
 ```
 
-### Para el equipo — primera vez en una máquina nueva
-
-```bash
-# 1. Clonar el proyecto
-git clone [repo-dev-agent]
-cd dev-agent
-
-# 2. Crear entorno virtual e instalar dependencias
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# 3. Copiar configuración local
-cp config.example.py config_local.py
-# Edita config_local.py con tus rutas de repos Go
-
-# 4. Configurar credenciales AWS SSO (una sola vez)
-python setup_sso.py
-# Completa el login en el browser
-
-# 5. Verificar
-python setup_sso.py --verify
-# Debe mostrar todo ✓
-
-# 6. Iniciar el agente
-python main.py
-```
-
----
-
 ## Autenticación
 
 Este workspace usa Amazon Bedrock vía SSO — no necesitas
@@ -123,7 +75,6 @@ Configura tu perfil SSO una sola vez:
 python setup_sso.py
 python setup_sso.py --verify
 ```
-Para más detalles ver ONBOARDING.md.
 
 El agente renueva la sesión automáticamente (botocore renueva las credenciales
 antes de que expiren, leyendo el token SSO del cache local).

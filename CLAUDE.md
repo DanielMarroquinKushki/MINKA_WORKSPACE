@@ -7,36 +7,31 @@ Guía para trabajar en este proyecto. Léela antes de tocar código.
 ## Iniciar el agente (instrucciones para Claude Code)
 
 Cuando el developer diga "inicia el agente", "abre el agente" o similar
-→ ejecuta en tu terminal: `./agent`
+→ ejecuta en tu terminal: `python main.py` (desde el clon del repo, con el venv activo)
 
-**Regla de oro: NUNCA pedirle al developer que active el venv ni exporte
-variables.** `./agent` lo hace todo automáticamente (venv, AWS_PROFILE,
-LLM_BACKEND). Para iniciar sin configuración: solo `./agent`.
+Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
+`<DATA_DIR>/.env` (LLM_BACKEND, AWS_PROFILE).
 
 **Proyectos (Arnés Global):**
-- `./agent` → usa `DEFAULT_PROJECT` de `config_local.py` (proyecto de referencia: amex-colombia)
-- `./agent --project <nombre>` → cambia de proyecto
+- `python main.py` → usa `DEFAULT_PROJECT` de `<DATA_DIR>/config_local.py` (proyecto de referencia: amex-colombia)
+- `python main.py --project <nombre>` → cambia de proyecto
 - Proyecto nuevo: ver `projects/_template/README.md`
 
 **Si hay error de sesión AWS:**
 ```bash
 aws sso login --profile bedrock
 ```
-Luego: `./agent`
+Luego: `python main.py`
 
 **Comandos disponibles dentro del chat:**
 - `/status`  → estado del sistema (sesión AWS, backend, repos, memoria, nivel)
 - `/clear`   → limpia el historial de la sesión
 - `salir`    → termina la sesión
-- `./agent --debug` → muestra input/resultado de cada tool call
+- `python main.py --debug` → muestra input/resultado de cada tool call
 
 **Configuración:**
 - venv: `.venv/`
 - Perfil AWS: `bedrock`, región: `us-east-1`
-
-**Contexto del proyecto:** lee `CONTEXTO_MAESTRO_DEV_AGENT.md` (raíz del
-proyecto) para entender la arquitectura completa antes de modificar
-cualquier archivo.
 
 ---
 
@@ -85,8 +80,8 @@ escritura en repos → core/orchestrator/approval_gate.py (diff + confirmación)
 - `core/memory/` — memoria de sesión y persistente (Niveles 4-5 en stub).
 - `core/evaluator/` — evaluación y auto-mejora (Niveles 5-6 en stub).
 - `projects/amex-colombia/` — config, prompts, knowledge (extracted/professional
-  pagos/team). El contexto de corto plazo vive en `active-context/[proyecto].md`
-  (raíz del workspace), fuente única de verdad.
+  pagos/team). El contexto de corto plazo vive en
+  `<DATA_DIR>/active-context/[proyecto].md`, fuente única de verdad.
 - `projects/_template/` — plantilla para proyectos nuevos (ver su README.md).
 
 ---

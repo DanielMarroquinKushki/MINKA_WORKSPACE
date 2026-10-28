@@ -295,7 +295,7 @@ def main(
         proj = (task or "").strip() or getattr(config, "ACTIVE_PROJECT", None)
         if not proj:
             console.print(
-                "[red]Especifica el proyecto: ./agent --evaluate <proyecto> "
+                f"[red]Especifica el proyecto: {config.APP_NAME} --evaluate <proyecto> "
                 "(o usa --project).[/red]"
             )
             raise typer.Exit(code=1)
@@ -309,7 +309,9 @@ def main(
     if optimize_prompt:
         agent_name = (task or "").strip()
         if not agent_name:
-            console.print("[red]Especifica el agente: ./agent --optimize-prompt <agente>[/red]")
+            console.print(
+                f"[red]Especifica el agente: {config.APP_NAME} --optimize-prompt <agente>[/red]"
+            )
             raise typer.Exit(code=1)
         proj = getattr(config, "ACTIVE_PROJECT", None)
         if not proj:

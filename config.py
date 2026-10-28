@@ -2,8 +2,8 @@
 config.py — Configuración base del sistema dev-agent.
 
 Estos valores son los defaults del proyecto. Cada dev crea su propio
-`config_local.py` (copiando `config.example.py`) con SUS rutas de repos.
-`config_local.py` está en .gitignore y NO se commitea.
+`<DATA_DIR>/config_local.py` (copiando `config.example.py`) con SUS rutas de repos;
+vive fuera del repo, con los datos del usuario (ver DATA_DIR más abajo).
 
 Carga: los módulos deben usar `from config_loader import config` para obtener
 la configuración efectiva (base + overrides locales). Ver config_loader.py.

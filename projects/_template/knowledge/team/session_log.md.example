@@ -2,8 +2,7 @@
 
 > Bitácora cronológica de sesiones de trabajo (más reciente arriba). Una entrada por
 > sesión: qué se hizo, dónde (archivo:línea o commit), estado y riesgos detectados.
-> Claude Code la actualiza automáticamente (ver "Sistema de memoria" en el CLAUDE.md
-> del workspace). El resumen vivo está en `active-context/[proyecto].md`; las decisiones
+> El resumen vivo está en `<DATA_DIR>/active-context/[proyecto].md`; las decisiones
 > de diseño en `decisions_log.md`.
 >
 > Al crear el proyecto: renombra `session_log.md.example → session_log.md` y borra el
