@@ -2,8 +2,8 @@
 
 import sys
 
-from cincha import config_loader
-from cincha.core.prompt_loader import load_system_prompt
+from minka import config_loader
+from minka.core.prompt_loader import load_system_prompt
 
 
 def test_config_local_desde_data_dir(tmp_path, monkeypatch):

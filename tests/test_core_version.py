@@ -1,7 +1,7 @@
 """Guard de CORE_MODULE_NAME vacío en check_core_version / check_version_drift."""
 
-from cincha.config_loader import config
-from cincha.core.tools.analysis.dependency_mapper import check_version_drift
+from minka.config_loader import config
+from minka.core.tools.analysis.dependency_mapper import check_version_drift
 
 
 def test_core_module_vacio_no_matchea_ni_reporta_drift(tmp_path, monkeypatch):

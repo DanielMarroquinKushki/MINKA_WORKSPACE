@@ -3,9 +3,9 @@
 import hashlib
 import pathlib
 
-from cincha.config_loader import config
-from cincha.core.tools.analysis import risk_analyzer as ra
-from cincha.core.tools.git import pr_tools as pt
+from minka.config_loader import config
+from minka.core.tools.analysis import risk_analyzer as ra
+from minka.core.tools.git import pr_tools as pt
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "demo"
 SHA = {

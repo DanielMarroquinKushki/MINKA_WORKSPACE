@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cincha.core.tools.analysis.freshness import (
+from minka.core.tools.analysis.freshness import (
     STATUS_FRESH,
     STATUS_STALE,
     STATUS_UNKNOWN,

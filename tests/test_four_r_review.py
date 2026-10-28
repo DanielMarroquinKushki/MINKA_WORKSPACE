@@ -1,7 +1,7 @@
 """Tests offline de four_r_review — agregación pura + fallback (sin LLM)."""
 
-from cincha.config_loader import config
-from cincha.core.orchestrator.four_r_review import (
+from minka.config_loader import config
+from minka.core.orchestrator.four_r_review import (
     DimensionFinding,
     FourRReviewResult,
     _lens_finding,
@@ -37,7 +37,7 @@ def test_summary_contains_dimension_and_status():
 
 
 def test_lens_finding_fallback_when_no_structured(monkeypatch):
-    from cincha.core import structured as structured
+    from minka.core import structured as structured
 
     monkeypatch.setattr(structured, "call_structured", lambda *a, **k: None)
     f = _lens_finding("Riesgo", "prompt", "diff", client=None, model="m")

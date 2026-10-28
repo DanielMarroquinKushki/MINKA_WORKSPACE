@@ -4,8 +4,8 @@ Simulan un run interrumpido y verifican que al reanudar se saltan los pasos ya
 completados, y que el estado se limpia al terminar.
 """
 
-from cincha.config_loader import config
-from cincha.core.orchestrator.orchestrator import Orchestrator
+from minka.config_loader import config
+from minka.core.orchestrator.orchestrator import Orchestrator
 
 
 class _FakeAgent:

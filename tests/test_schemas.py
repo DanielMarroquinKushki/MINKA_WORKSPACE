@@ -2,7 +2,7 @@
 import pytest
 from pydantic import ValidationError
 
-from cincha.core.schemas import Plan, ReviewDecision
+from minka.core.schemas import Plan, ReviewDecision
 
 
 def test_plan_valid():

@@ -1,7 +1,7 @@
 """Tests del chunking del RAG (chunk_md_file / chunk_go_file)."""
 from pathlib import Path
 
-from cincha.core.tools.rag.indexer import chunk_go_file, chunk_md_file
+from minka.core.tools.rag.indexer import chunk_go_file, chunk_md_file
 
 
 def test_chunk_md_by_headers():

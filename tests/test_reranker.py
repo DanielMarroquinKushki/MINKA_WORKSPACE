@@ -4,7 +4,7 @@ El rerank real con modelo NO se testea aquí (descargaría ~2GB): se valida a ma
 Aquí bloqueamos el contrato de degradación: si el modelo no está, nunca crashea
 y devuelve el orden original con score None.
 """
-from cincha.core.tools.rag import reranker
+from minka.core.tools.rag import reranker
 
 
 def test_rerank_empty_returns_empty():

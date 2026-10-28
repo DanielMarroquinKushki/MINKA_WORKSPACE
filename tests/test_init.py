@@ -1,9 +1,9 @@
-"""cincha --init: copia las plantillas de datos a DATA_DIR sin sobrescribir nunca."""
+"""minka --init: copia las plantillas de datos a DATA_DIR sin sobrescribir nunca."""
 
 from pathlib import Path
 
-from cincha.config_loader import config
-from cincha.core.project_scaffold import init_data_dir
+from minka.config_loader import config
+from minka.core.project_scaffold import init_data_dir
 
 
 def test_init_copia_plantillas_y_no_sobrescribe(tmp_path, monkeypatch):

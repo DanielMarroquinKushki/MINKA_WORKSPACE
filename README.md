@@ -14,12 +14,12 @@ Escalable por niveles de autonomía (3 → 6) mediante flags de configuración.
 uv tool install git+<url-del-repo>
 ```
 
-Después: `cincha --init` (crea `config_local.py` y `.env` en `<DATA_DIR>`, sin
-sobrescribir), complétalos, corre `cincha-sso` y luego `cincha`. `<DATA_DIR>` es la
+Después: `minka --init` (crea `config_local.py` y `.env` en `<DATA_DIR>`, sin
+sobrescribir), complétalos, corre `minka-sso` y luego `minka`. `<DATA_DIR>` es la
 variable `DATA_DIR_ENV` de `_app.py` o, si no está, `~/.<APP_NAME>/`.
 
-> Nivel 4 (RAG): instala con el extra (`uv tool install 'cincha[rag] @ git+<url-del-repo>'`), pon `RAG_ENABLED=True` y luego
-> `cincha --index-repos`.
+> Nivel 4 (RAG): instala con el extra (`uv tool install 'minka-workspace[rag] @ git+<url-del-repo>'`), pon `RAG_ENABLED=True` y luego
+> `minka --index-repos`.
 
 ---
 
@@ -28,7 +28,7 @@ variable `DATA_DIR_ENV` de `_app.py` o, si no está, `~/.<APP_NAME>/`.
 ### Iniciar el agente
 
 ```bash
-cincha
+minka
 ```
 
 ### Si la sesión AWS expira (máximo una vez por jornada)
@@ -49,7 +49,7 @@ Aprueba en el browser. El agente retoma automáticamente — no lo reinicies.
 ### Verificar que todo está OK
 
 ```bash
-cincha-sso --verify
+minka-sso --verify
 ```
 
 Debe mostrar todo `✓`.
@@ -71,8 +71,8 @@ una API key de Anthropic.
 
 Configura tu perfil SSO una sola vez:
 ```bash
-cincha-sso
-cincha-sso --verify
+minka-sso
+minka-sso --verify
 ```
 
 El agente renueva la sesión automáticamente (botocore renueva las credenciales
@@ -102,9 +102,9 @@ regional `us.anthropic.` automáticamente en modo Bedrock (configurable con
 ## Uso
 
 ```bash
-cincha                                  # modo interactivo (español)
-cincha "analiza los riesgos del repo <alias>"
-cincha --no-llm-planner "genera reporte de infraestructura"  # routing offline
+minka                                  # modo interactivo (español)
+minka "analiza los riesgos del repo <alias>"
+minka --no-llm-planner "genera reporte de infraestructura"  # routing offline
 ```
 
 ### Ejemplos de pedidos

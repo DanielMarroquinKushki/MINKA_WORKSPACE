@@ -7,27 +7,27 @@ Guía para trabajar en este proyecto. Léela antes de tocar código.
 ## Iniciar el agente (instrucciones para Claude Code)
 
 Cuando el developer diga "inicia el agente", "abre el agente" o similar
-→ ejecuta en tu terminal: `cincha`
+→ ejecuta en tu terminal: `minka`
 
 Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
 `<DATA_DIR>/.env` (LLM_BACKEND, AWS_PROFILE).
 
 **Proyectos (Arnés Global):**
-- `cincha` → usa `DEFAULT_PROJECT` de `<DATA_DIR>/config_local.py` (proyecto de referencia: amex-colombia)
-- `cincha --project <nombre>` → cambia de proyecto
+- `minka` → usa `DEFAULT_PROJECT` de `<DATA_DIR>/config_local.py` (proyecto de referencia: amex-colombia)
+- `minka --project <nombre>` → cambia de proyecto
 - Proyecto nuevo: ver `projects/_template/README.md`
 
 **Si hay error de sesión AWS:**
 ```bash
 aws sso login --profile bedrock
 ```
-Luego: `cincha`
+Luego: `minka`
 
 **Comandos disponibles dentro del chat:**
 - `/status`  → estado del sistema (sesión AWS, backend, repos, memoria, nivel)
 - `/clear`   → limpia el historial de la sesión
 - `salir`    → termina la sesión
-- `cincha --debug` → muestra input/resultado de cada tool call
+- `minka --debug` → muestra input/resultado de cada tool call
 
 **Configuración:**
 - venv: `.venv/`
@@ -128,8 +128,8 @@ prefijo regional (`us.` / `eu.` / `apac.`) — un ID sin él da **400
 ## Configuración inicial AWS SSO (una sola vez)
 
 ```bash
-cincha-sso            # crea/verifica el perfil "bedrock" (abre browser)
-cincha-sso --verify   # checklist completo + ping real a Bedrock
+minka-sso            # crea/verifica el perfil "bedrock" (abre browser)
+minka-sso --verify   # checklist completo + ping real a Bedrock
 ```
 
 Si ves "Sesión expirada" durante una tarea, en otra terminal:
@@ -182,7 +182,7 @@ aws sso login --profile bedrock
   confirmación antes de editar cualquier archivo ya versionado. Los archivos
   nuevos se pueden crear directamente.
 - **Lazy init de recursos costosos.** Clientes LLM y `AWSSessionManager` se
-  crean perezosamente (`get_aws_session()`), para que `cincha --help`
+  crean perezosamente (`get_aws_session()`), para que `minka --help`
   no falle si AWS/API key aún no están configurados.
 - **Helpers idempotentes.** Normalizadores como `resolve_model_id()` deben ser
   seguros ante entradas ya normalizadas (no duplicar prefijos).

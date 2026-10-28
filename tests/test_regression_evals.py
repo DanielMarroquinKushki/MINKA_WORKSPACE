@@ -4,7 +4,7 @@ Los runs con agente + LLM-judge NO se testean aquí (necesitan LLM/SSO); se
 validan en la tanda SSO. Aquí bloqueamos lo determinista.
 """
 
-from cincha.core.evaluator.regression_evals import (
+from minka.core.evaluator.regression_evals import (
     keyword_coverage,
     load_golden_set,
 )
