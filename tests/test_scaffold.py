@@ -15,14 +15,11 @@ from core.project_scaffold import (
 
 @pytest.fixture
 def fake_workspace(tmp_path, monkeypatch):
-    """Copia el _template real a un workspace temporal y apunta config.BASE_DIR ahí."""
-    real_base = Path(config.BASE_DIR)
-    fake_base = tmp_path / "dev-agent"
-    (fake_base / "projects").mkdir(parents=True)
-    shutil.copytree(
-        real_base / "projects" / "_template", fake_base / "projects" / "_template"
-    )
-    monkeypatch.setattr(config, "BASE_DIR", fake_base)
+    """Copia el _template real a un workspace temporal y apunta config.PROJECTS_DIR ahí."""
+    fake_projects = tmp_path / "dev-agent" / "projects"
+    fake_projects.mkdir(parents=True)
+    shutil.copytree(Path(config.PROJECTS_DIR) / "_template", fake_projects / "_template")
+    monkeypatch.setattr(config, "PROJECTS_DIR", fake_projects)
     return tmp_path
 
 
@@ -55,9 +52,8 @@ def test_create_project_rejects_invalid_name(fake_workspace):
 
 def test_proyecto_nuevo_carga_sin_team_pillars(fake_workspace, monkeypatch):
     create_project("mi-proj", workspace_root=fake_workspace)
-    projects = Path(config.BASE_DIR) / "projects"
-    monkeypatch.setattr(config_loader, "_PROJECTS_DIR", projects)
-    cfg = config_loader.load_config("mi-proj")
+    projects = Path(config.PROJECTS_DIR)
+    cfg = config_loader.load_config("mi-proj", projects_dir=projects)
     assert cfg.TEAM_PILLARS == []
     assert "team/team_pillars.md" in cfg.AGENT_KNOWLEDGE["development_agent"]
     assert (projects / "mi-proj" / "knowledge" / "team" / "team_pillars.md").is_file()

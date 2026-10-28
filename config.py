@@ -18,6 +18,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
 KNOWLEDGE_DIR = BASE_DIR / "core" / "knowledge"
+# Raíz de los proyectos (projects/<p>/ y _template). Única fuente de esa ruta.
+PROJECTS_DIR = BASE_DIR / "projects"
 
 # ---------------------------------------------------------------------------
 # Model routing — modelo óptimo por tipo de tarea.

@@ -27,10 +27,10 @@ def test_keyword_coverage_empty_is_one():
 
 
 def test_load_golden_set_demo(demo_project):
-    cases = load_golden_set("demo", base_dir=demo_project.BASE_DIR)
+    cases = load_golden_set("demo", projects_dir=demo_project.PROJECTS_DIR)
     assert [c.id for c in cases] == ["demo-1"]
     assert cases[0].must_mention == ["demo"]
 
 
 def test_load_golden_set_missing_returns_empty(tmp_path):
-    assert load_golden_set("no-existe", base_dir=tmp_path) == []
+    assert load_golden_set("no-existe", projects_dir=tmp_path) == []

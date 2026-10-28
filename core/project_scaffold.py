@@ -79,7 +79,7 @@ def create_project(
         raise InvalidProjectNameError("'_template' es un nombre reservado.")
 
     root = workspace_root or Path(config.BASE_DIR).parent
-    projects_dir = Path(config.BASE_DIR) / "projects"
+    projects_dir = Path(config.PROJECTS_DIR)
     template_dir = projects_dir / "_template"
     project_dir = projects_dir / name
 

@@ -106,7 +106,7 @@ def changed_files(repo_root: Path, commit: str, paths: list[str]) -> tuple[list[
 
 
 def manifest_path(config, project: str) -> Path:
-    return Path(config.BASE_DIR) / "projects" / project / MANIFEST_REL
+    return Path(config.PROJECTS_DIR) / project / MANIFEST_REL
 
 
 def load_manifest(path: Path) -> dict:

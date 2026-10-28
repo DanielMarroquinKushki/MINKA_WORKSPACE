@@ -59,11 +59,9 @@ def write_demo_project(base: pathlib.Path) -> pathlib.Path:
     return proj
 
 
-def load_demo(base: pathlib.Path, mp: pytest.MonkeyPatch):
+def load_demo(base: pathlib.Path):
     """Carga el demo como namespace nuevo (no toca el config global)."""
-    mp.setattr(config_loader, "_PROJECTS_DIR", base / "projects")
-    cfg = config_loader.load_config("demo")
-    cfg.BASE_DIR = base
+    cfg = config_loader.load_config("demo", projects_dir=base / "projects")
     # config_local.py se aplica al final en load_config: re-aplica el demo por encima.
     for key, value in DEMO_VALUES.items():
         setattr(cfg, key, value)
@@ -72,7 +70,7 @@ def load_demo(base: pathlib.Path, mp: pytest.MonkeyPatch):
 
 def apply_demo_global(cfg, mp: pytest.MonkeyPatch) -> None:
     """Aplica el demo al config global (temporal: monkeypatch lo restaura)."""
-    for key in ("BASE_DIR", "ACTIVE_PROJECT", *DEMO_VALUES):
+    for key in ("PROJECTS_DIR", "ACTIVE_PROJECT", *DEMO_VALUES):
         mp.setattr(config, key, getattr(cfg, key), raising=False)
 
 
@@ -93,7 +91,7 @@ def run_gate(mp: pytest.MonkeyPatch, cfg, new_content: str) -> dict:
 def demo_project(tmp_path, monkeypatch):
     base = tmp_path / "dev-agent"
     write_demo_project(base)
-    return load_demo(base, monkeypatch)
+    return load_demo(base)
 
 
 @pytest.fixture

@@ -53,7 +53,7 @@ class KnowledgeLoader:
         bases: list[Path] = []
         project = getattr(config, "ACTIVE_PROJECT", None)
         if project:
-            bases.append(config.BASE_DIR / "projects" / project / "knowledge")
+            bases.append(config.PROJECTS_DIR / project / "knowledge")
         bases.append(config.KNOWLEDGE_DIR)
 
         wanted = getattr(config, "AGENT_KNOWLEDGE", {}).get(agent_name, [])

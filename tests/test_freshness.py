@@ -66,7 +66,9 @@ def _manifest(tmp_path: Path, commit: str, paths: list[str], repo_key: str = "de
 
 
 def _config(repo: Path) -> SimpleNamespace:
-    return SimpleNamespace(REPOS={"demo": str(repo)}, ACTIVE_PROJECT="demo", BASE_DIR=repo.parent)
+    return SimpleNamespace(
+        REPOS={"demo": str(repo)}, ACTIVE_PROJECT="demo", PROJECTS_DIR=repo.parent / "projects"
+    )
 
 
 def test_fresh_when_nothing_changed(repo, tmp_path):
@@ -115,7 +117,7 @@ def test_unknown_when_repo_not_configured(repo, tmp_path):
 
 def test_missing_manifest_means_no_docs(tmp_path):
     assert load_manifest(tmp_path / "no-existe.json") == {}
-    cfg = SimpleNamespace(REPOS={}, ACTIVE_PROJECT="demo", BASE_DIR=tmp_path)
+    cfg = SimpleNamespace(REPOS={}, ACTIVE_PROJECT="demo", PROJECTS_DIR=tmp_path / "projects")
     assert check_freshness(cfg) == []
 
 

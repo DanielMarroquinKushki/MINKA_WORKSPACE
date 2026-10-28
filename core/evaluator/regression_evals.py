@@ -30,12 +30,12 @@ class EvalCase(BaseModel):
     rubric: str = ""
 
 
-def load_golden_set(project: str, base_dir: Path | None = None) -> list[EvalCase]:
-    """Carga projects/<project>/evals/cases.json. Devuelve [] si no existe."""
+def load_golden_set(project: str, projects_dir: Path | None = None) -> list[EvalCase]:
+    """Carga <PROJECTS_DIR>/<project>/evals/cases.json. Devuelve [] si no existe."""
     from config_loader import config
 
-    root = base_dir or Path(config.BASE_DIR)
-    path = root / "projects" / project / "evals" / "cases.json"
+    root = Path(projects_dir or config.PROJECTS_DIR)
+    path = root / project / "evals" / "cases.json"
     if not path.is_file():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))

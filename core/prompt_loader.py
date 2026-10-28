@@ -32,7 +32,7 @@ def load_system_prompt(agent_name: str) -> str:
 
     project = getattr(config, "ACTIVE_PROJECT", None)
     if project:
-        f = config.BASE_DIR / "projects" / project / "prompts" / f"{module_name}.py"
+        f = config.PROJECTS_DIR / project / "prompts" / f"{module_name}.py"
         if f.is_file():
             spec = importlib.util.spec_from_file_location(f"_prj_{module_name}", f)
             mod = importlib.util.module_from_spec(spec)

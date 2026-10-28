@@ -145,7 +145,9 @@ def test_index_knowledge_incremental_and_purge(fake_chroma, tmp_path):
     proj.mkdir(parents=True)
     (proj / "notes.md").write_text("# Notas\nalgo\n", encoding="utf-8")
     (tmp_path / "projects" / "_template" / "knowledge").mkdir(parents=True)
-    cfg = SimpleNamespace(RAG_ENABLED=True, KNOWLEDGE_DIR=generic, BASE_DIR=tmp_path)
+    cfg = SimpleNamespace(
+        RAG_ENABLED=True, KNOWLEDGE_DIR=generic, PROJECTS_DIR=tmp_path / "projects"
+    )
 
     first = index_knowledge(cfg)
     assert first["files"] == 2 and set(first["sources"]) == {"generic", "demo"}

@@ -28,8 +28,6 @@ from types import SimpleNamespace
 
 import config as _base
 
-_PROJECTS_DIR = Path(__file__).parent / "projects"
-
 
 def _uppercase_vars(module) -> dict:
     """Extrae solo las constantes (MAYÚSCULAS) de un módulo."""
@@ -40,10 +38,10 @@ def _uppercase_vars(module) -> dict:
     }
 
 
-def _load_project_vars(project: str) -> dict:
+def _load_project_vars(project: str, projects_dir: Path) -> dict:
     """Carga las MAYÚSCULAS de projects/<project>/config.py (por ruta, con
     importlib: los proyectos no son paquetes Python)."""
-    cfg_file = _PROJECTS_DIR / project / "config.py"
+    cfg_file = projects_dir / project / "config.py"
     if not cfg_file.is_file():
         raise FileNotFoundError(f"No existe la config del proyecto '{project}': {cfg_file}")
     spec = importlib.util.spec_from_file_location(f"_project_{project}", cfg_file)
@@ -52,7 +50,7 @@ def _load_project_vars(project: str) -> dict:
     return _uppercase_vars(module)
 
 
-def load_config(project: str | None = None) -> SimpleNamespace:
+def load_config(project: str | None = None, projects_dir: Path | None = None) -> SimpleNamespace:
     values = _uppercase_vars(_base)
 
     # Overrides locales del dev (opcional, no versionado). Se leen primero
@@ -66,13 +64,18 @@ def load_config(project: str | None = None) -> SimpleNamespace:
         # Sin config_local.py se usan los defaults. Es válido para --help.
         pass
 
+    # Ruta de proyectos: argumento > config_local > config.py. Se resuelve en cada
+    # llamada (set_project incluido), nunca al importar.
+    projects_dir = Path(projects_dir or local_values.get("PROJECTS_DIR", _base.PROJECTS_DIR))
+
     # Capa proyecto: explícito > DEFAULT_PROJECT local > ninguno (solo global).
     if project is None:
         project = local_values.get("DEFAULT_PROJECT")
     if project:
-        values.update(_load_project_vars(project))
+        values.update(_load_project_vars(project, projects_dir))
 
     values.update(local_values)
+    values["PROJECTS_DIR"] = projects_dir
 
     # USE_BEDROCK se deriva de LLM_BACKEND DESPUÉS del merge: si config_local
     # fija el backend, deja de depender de variables del shell.

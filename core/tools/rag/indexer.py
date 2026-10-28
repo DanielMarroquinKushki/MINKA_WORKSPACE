@@ -335,7 +335,7 @@ def index_knowledge(config, only_changed: bool = True) -> dict:
     # (source, ruta_raiz) — genérico + un knowledge/ por proyecto detectado.
     roots: list[tuple[str, Path]] = [("generic", Path(config.KNOWLEDGE_DIR))]
 
-    projects_dir = Path(config.BASE_DIR) / "projects"
+    projects_dir = Path(config.PROJECTS_DIR)
     if projects_dir.is_dir():
         for proj in sorted(projects_dir.iterdir()):
             if proj.name == "_template" or not proj.is_dir():
