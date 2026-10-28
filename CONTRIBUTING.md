@@ -25,4 +25,4 @@ Sigue los 6 pasos de `projects/_template/README.md`.
 ## Convenciones
 - Diffs antes de modificar archivos existentes
 - Los commits los hace el dev, nunca el agente
-- Todo cambio en core/ se verifica con `python main.py --help`
+- Todo cambio en core/ se verifica con `python -m cincha.main --help`

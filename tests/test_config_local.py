@@ -2,7 +2,7 @@
 
 import sys
 
-import config_loader
+from cincha import config_loader
 
 
 def test_config_local_desde_data_dir(tmp_path, monkeypatch):

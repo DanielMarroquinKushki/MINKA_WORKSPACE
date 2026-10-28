@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from pydantic import BaseModel
 
-from core.structured import call_structured
+from cincha.core.structured import call_structured
 
 
 class Demo(BaseModel):

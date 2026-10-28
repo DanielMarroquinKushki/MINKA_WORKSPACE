@@ -7,27 +7,27 @@ Guía para trabajar en este proyecto. Léela antes de tocar código.
 ## Iniciar el agente (instrucciones para Claude Code)
 
 Cuando el developer diga "inicia el agente", "abre el agente" o similar
-→ ejecuta en tu terminal: `python main.py` (desde el clon del repo, con el venv activo)
+→ ejecuta en tu terminal: `python -m cincha.main` (desde el clon del repo, con el venv activo y `PYTHONPATH=src` hasta que el paquete sea instalable)
 
 Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
 `<DATA_DIR>/.env` (LLM_BACKEND, AWS_PROFILE).
 
 **Proyectos (Arnés Global):**
-- `python main.py` → usa `DEFAULT_PROJECT` de `<DATA_DIR>/config_local.py` (proyecto de referencia: amex-colombia)
-- `python main.py --project <nombre>` → cambia de proyecto
+- `python -m cincha.main` → usa `DEFAULT_PROJECT` de `<DATA_DIR>/config_local.py` (proyecto de referencia: amex-colombia)
+- `python -m cincha.main --project <nombre>` → cambia de proyecto
 - Proyecto nuevo: ver `projects/_template/README.md`
 
 **Si hay error de sesión AWS:**
 ```bash
 aws sso login --profile bedrock
 ```
-Luego: `python main.py`
+Luego: `python -m cincha.main`
 
 **Comandos disponibles dentro del chat:**
 - `/status`  → estado del sistema (sesión AWS, backend, repos, memoria, nivel)
 - `/clear`   → limpia el historial de la sesión
 - `salir`    → termina la sesión
-- `python main.py --debug` → muestra input/resultado de cada tool call
+- `python -m cincha.main --debug` → muestra input/resultado de cada tool call
 
 **Configuración:**
 - venv: `.venv/`
@@ -128,8 +128,8 @@ prefijo regional (`us.` / `eu.` / `apac.`) — un ID sin él da **400
 ## Configuración inicial AWS SSO (una sola vez)
 
 ```bash
-python setup_sso.py            # crea/verifica el perfil "bedrock" (abre browser)
-python setup_sso.py --verify   # checklist completo + ping real a Bedrock
+python -m cincha.setup_sso            # crea/verifica el perfil "bedrock" (abre browser)
+python -m cincha.setup_sso --verify   # checklist completo + ping real a Bedrock
 ```
 
 Si ves "Sesión expirada" durante una tarea, en otra terminal:
@@ -182,7 +182,7 @@ aws sso login --profile bedrock
   confirmación antes de editar cualquier archivo ya versionado. Los archivos
   nuevos se pueden crear directamente.
 - **Lazy init de recursos costosos.** Clientes LLM y `AWSSessionManager` se
-  crean perezosamente (`get_aws_session()`), para que `python main.py --help`
+  crean perezosamente (`get_aws_session()`), para que `python -m cincha.main --help`
   no falle si AWS/API key aún no están configurados.
 - **Helpers idempotentes.** Normalizadores como `resolve_model_id()` deben ser
   seguros ante entradas ya normalizadas (no duplicar prefijos).

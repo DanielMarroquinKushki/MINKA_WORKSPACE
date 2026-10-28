@@ -1,5 +1,5 @@
 """Tests del routing por keywords del planner (determinista, sin LLM)."""
-from core.orchestrator.planner import _keyword_plan, make_plan
+from cincha.core.orchestrator.planner import _keyword_plan, make_plan
 
 
 def test_keyword_development():

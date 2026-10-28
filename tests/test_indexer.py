@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.tools.rag import indexer
-from core.tools.rag.indexer import blob_sha, index_knowledge, index_repos
+from cincha.core.tools.rag import indexer
+from cincha.core.tools.rag.indexer import blob_sha, index_knowledge, index_repos
 
 
 class FakeCollection:

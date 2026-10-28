@@ -5,6 +5,7 @@ description = "Arnés Global multi-agente para desarrollo asistido por IA sobre 
 requires-python = ">=3.12"
 
 [tool.ruff]
+src = ["src", "tests"]
 target-version = "py312"
 line-length = 100
 extend-exclude = [".venv", "output", ".chromadb"]
@@ -15,7 +16,10 @@ extend-exclude = [".venv", "output", ".chromadb"]
 select = ["E", "F", "I"]
 ignore = ["E501"]        # la longitud la maneja el formatter; no fallar por líneas puntuales
 
+[tool.ruff.lint.isort]
+known-first-party = ["cincha"]
+
 [tool.pytest.ini_options]
-pythonpath = ["."]        # permite `from config_loader import config` en los tests
+pythonpath = ["src"]      # layout src/: los tests importan `cincha.*` (la instalación real es el 5.6)
 testpaths = ["tests"]
 addopts = "-q -p no:deepeval"

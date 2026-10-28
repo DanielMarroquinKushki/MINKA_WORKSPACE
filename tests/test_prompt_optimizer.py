@@ -5,8 +5,8 @@ Aquí bloqueamos lo determinista y el gate de nivel.
 """
 import pytest
 
-from config_loader import config
-from core.evaluator.prompt_optimizer import PromptOptimizer, _missed_keywords
+from cincha.config_loader import config
+from cincha.core.evaluator.prompt_optimizer import PromptOptimizer, _missed_keywords
 
 
 def test_missed_keywords():

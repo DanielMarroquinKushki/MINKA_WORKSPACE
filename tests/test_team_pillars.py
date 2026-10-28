@@ -4,10 +4,10 @@ import hashlib
 import json
 import pathlib
 
-from config_loader import config
-from core.evaluator.prompt_optimizer import _meta_system
-from core.orchestrator.four_r_review import LENS_PROMPTS, _resolve_lens
-from core.tools.registry import _TOOLS
+from cincha.config_loader import config
+from cincha.core.evaluator.prompt_optimizer import _meta_system
+from cincha.core.orchestrator.four_r_review import LENS_PROMPTS, _resolve_lens
+from cincha.core.tools.registry import _TOOLS
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "demo"
 SHA = {

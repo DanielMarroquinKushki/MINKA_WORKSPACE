@@ -6,8 +6,8 @@ arriba. Aquí bloqueamos el contrato de seguridad del context manager.
 
 import pytest
 
-from config_loader import config
-from core import observability
+from cincha.config_loader import config
+from cincha.core import observability
 
 
 def test_trace_noop_when_disabled(monkeypatch):

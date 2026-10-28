@@ -1,8 +1,8 @@
 """Tests de resolve_model_id — idempotencia del prefijo Bedrock."""
 import pytest
 
-from config_loader import config
-from core.agents.base_agent import resolve_model_id
+from cincha.config_loader import config
+from cincha.core.agents.base_agent import resolve_model_id
 
 
 @pytest.fixture

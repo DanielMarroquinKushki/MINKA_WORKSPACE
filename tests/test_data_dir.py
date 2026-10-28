@@ -3,7 +3,7 @@
 import importlib.util
 from pathlib import Path
 
-import config as config_py
+from cincha import config as config_py
 
 
 def _guard_env(monkeypatch, *keys: str) -> None:
@@ -40,8 +40,8 @@ def test_data_dir_desde_variable(tmp_path, monkeypatch):
 def test_data_dir_default_en_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     mod = _fresh_config(monkeypatch, None)
-    assert mod.DATA_DIR == tmp_path / ".motor"
-    assert mod.PROJECTS_DIR == tmp_path / ".motor" / "projects"
+    assert mod.DATA_DIR == tmp_path / ".cincha"
+    assert mod.PROJECTS_DIR == tmp_path / ".cincha" / "projects"
 
 
 def test_env_desde_data_dir(tmp_path, monkeypatch):

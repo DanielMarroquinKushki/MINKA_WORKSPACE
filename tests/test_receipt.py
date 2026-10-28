@@ -1,8 +1,8 @@
 """Test offline del recibo del ApprovalGate (best-effort, output/receipts/)."""
 from datetime import datetime
 
-from config_loader import config
-from core.orchestrator.approval_gate import ApprovalGate
+from cincha.config_loader import config
+from cincha.core.orchestrator.approval_gate import ApprovalGate
 
 
 def test_generate_receipt_writes_file(tmp_path, monkeypatch):

@@ -4,8 +4,8 @@ La memoria real (mem0 + LLM Bedrock) se valida en la tanda SSO. Aquí bloqueamos
 que, sin disponibilidad, TODO no-opea sin crashear.
 """
 
-from config_loader import config
-from core.memory.vector_memory import VectorMemory
+from cincha.config_loader import config
+from cincha.core.memory.vector_memory import VectorMemory
 
 
 def test_noop_when_disabled(monkeypatch):

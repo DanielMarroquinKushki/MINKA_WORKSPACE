@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-import config_loader
-from config_loader import config
-from core.project_scaffold import (
+from cincha import config_loader
+from cincha.config_loader import config
+from cincha.core.project_scaffold import (
     InvalidProjectNameError,
     ProjectExistsError,
     create_project,
