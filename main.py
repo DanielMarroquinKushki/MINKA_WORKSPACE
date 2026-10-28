@@ -25,13 +25,10 @@ import json
 from pathlib import Path
 
 import typer
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 
 from config_loader import config
-
-load_dotenv()  # carga ANTHROPIC_API_KEY desde .env si existe
 
 app = typer.Typer(
     add_completion=False, help="Sistema multi-agente para desarrollo asistido por IA."

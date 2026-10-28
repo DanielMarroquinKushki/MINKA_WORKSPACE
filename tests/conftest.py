@@ -1,14 +1,23 @@
 """Fixtures compartidas: proyecto demo en tmp_path y exclusión de *_amex.py sin amex-colombia."""
 
 import json
+import os
 import pathlib
+import shutil
 import tempfile
 
-import pytest
+from _app import APP_NAME, DATA_DIR_ENV
 
-import config_loader
-from config_loader import config
-from core.orchestrator import approval_gate as ag
+# Aísla la sesión del DATA_DIR real (~/.<APP_NAME>, config_local.py, .env): debe fijarse
+# ANTES del primer import de config, que calcula DATA_DIR y carga el .env al importarse.
+_TEST_DATA_DIR = tempfile.mkdtemp(prefix=f"{APP_NAME}-tests-")
+os.environ[DATA_DIR_ENV] = _TEST_DATA_DIR
+
+import pytest  # noqa: E402
+
+import config_loader  # noqa: E402
+from config_loader import config  # noqa: E402
+from core.orchestrator import approval_gate as ag  # noqa: E402
 
 _DEV_AGENT = pathlib.Path(__file__).resolve().parent.parent
 # Sin projects/amex-colombia/ (repo del motor genérico) los tests byte a byte de amex no aplican.
@@ -103,3 +112,7 @@ def demo_global(demo_project, monkeypatch):
 @pytest.fixture
 def capture_panels(monkeypatch):
     return lambda cfg, new_content: run_gate(monkeypatch, cfg, new_content)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    shutil.rmtree(_TEST_DATA_DIR, ignore_errors=True)

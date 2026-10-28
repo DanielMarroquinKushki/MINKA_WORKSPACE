@@ -6,15 +6,22 @@ from pathlib import Path
 import config as config_py
 
 
-def _fresh_config(monkeypatch, home: Path | None):
+def _guard_env(monkeypatch, *keys: str) -> None:
+    """Quita las claves y deja que monkeypatch las restaure aunque otro (setdefault,
+    load_dotenv) las escriba directo en os.environ."""
+    for key in keys:
+        monkeypatch.setenv(key, "")
+        monkeypatch.delenv(key)
+
+
+def _fresh_config(monkeypatch, home: Path | None, env_keys: tuple = ()):
     """Ejecuta config.py como módulo nuevo (no recarga el config global)."""
     if home is None:
         monkeypatch.delenv(config_py.DATA_DIR_ENV, raising=False)
     else:
         monkeypatch.setenv(config_py.DATA_DIR_ENV, str(home))
-    # config.py hace setdefault de esta variable: así monkeypatch la restaura.
-    monkeypatch.setenv("DEEPEVAL_CACHE_FOLDER", "")
-    monkeypatch.delenv("DEEPEVAL_CACHE_FOLDER")
+    # config.py hace setdefault de DEEPEVAL_CACHE_FOLDER y carga el .env de DATA_DIR.
+    _guard_env(monkeypatch, "DEEPEVAL_CACHE_FOLDER", *env_keys)
     spec = importlib.util.spec_from_file_location("_config_fresh", config_py.__file__)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -35,3 +42,9 @@ def test_data_dir_default_en_home(tmp_path, monkeypatch):
     mod = _fresh_config(monkeypatch, None)
     assert mod.DATA_DIR == tmp_path / ".motor"
     assert mod.PROJECTS_DIR == tmp_path / ".motor" / "projects"
+
+
+def test_env_desde_data_dir(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("LINE_CAP=77\n", encoding="utf-8")
+    mod = _fresh_config(monkeypatch, tmp_path, env_keys=("LINE_CAP",))
+    assert mod.LINE_CAP == 77

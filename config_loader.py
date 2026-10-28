@@ -7,9 +7,9 @@ funciona porque config.py es un módulo, no un paquete).
 Estrategia (Arnés Global — merge en 3 capas):
   1. Toma todas las MAYÚSCULAS de config.py como base (global).
   2. Si hay proyecto activo (parámetro explícito o DEFAULT_PROJECT de
-     config_local.py), sus MAYÚSCULAS de projects/<proyecto>/config.py
+     <DATA_DIR>/config_local.py), sus MAYÚSCULAS de projects/<proyecto>/config.py
      sobreescriben las globales.
-  3. Si existe config_local.py, sus MAYÚSCULAS sobreescriben todo
+  3. Si existe <DATA_DIR>/config_local.py, sus MAYÚSCULAS sobreescriben todo
      (el dev siempre tiene la última palabra: rutas, backend, nivel).
   4. Expone un único objeto `config` con acceso por atributo.
 
@@ -23,10 +23,14 @@ Cambio de proyecto en runtime (main.py --project X):
 """
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import config as _base
+
+# Definen dónde vive config_local.py: no se pueden sobreescribir desde él.
+_LOCKED = ("DATA_DIR", "DATA_DIR_ENV", "APP_NAME")
 
 
 def _uppercase_vars(module) -> dict:
@@ -50,19 +54,33 @@ def _load_project_vars(project: str, projects_dir: Path) -> dict:
     return _uppercase_vars(module)
 
 
+def _load_local_vars(data_dir: Path) -> dict:
+    """MAYÚSCULAS de <data_dir>/config_local.py, cargado por ruta (sin tocar
+    sys.path ni sys.modules). {} si no existe."""
+    f = Path(data_dir) / "config_local.py"
+    if not f.is_file():
+        return {}
+    spec = importlib.util.spec_from_file_location("_config_local", f)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    values = _uppercase_vars(module)
+    for key in _LOCKED:
+        if key in values:
+            del values[key]
+            print(
+                f"⚠️ {f}: se ignora {key}; se cambia con la variable de entorno, no aquí.",
+                file=sys.stderr,
+            )
+    return values
+
+
 def load_config(project: str | None = None, projects_dir: Path | None = None) -> SimpleNamespace:
     values = _uppercase_vars(_base)
 
     # Overrides locales del dev (opcional, no versionado). Se leen primero
     # para conocer DEFAULT_PROJECT, pero se aplican al final (última palabra).
-    local_values: dict = {}
-    try:
-        import config_local as _local  # noqa: WPS433 (import local intencional)
-
-        local_values = _uppercase_vars(_local)
-    except ImportError:
-        # Sin config_local.py se usan los defaults. Es válido para --help.
-        pass
+    # Sin config_local.py se usan los defaults. Es válido para --help.
+    local_values = _load_local_vars(_base.DATA_DIR)
 
     # Ruta de proyectos: argumento > config_local > config.py. Se resuelve en cada
     # llamada (set_project incluido), nunca al importar.

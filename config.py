@@ -12,6 +12,10 @@ la configuración efectiva (base + overrides locales). Ver config_loader.py.
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+from _app import APP_NAME, DATA_DIR_ENV
+
 # ---------------------------------------------------------------------------
 # Rutas base
 # ---------------------------------------------------------------------------
@@ -21,12 +25,12 @@ KNOWLEDGE_DIR = BASE_DIR / "core" / "knowledge"
 TEMPLATE_DIR = BASE_DIR / "projects" / "_template"
 
 # Datos del usuario (proyectos, salida, índice RAG), fuera del paquete.
-# Nombre provisional: cambiar SOLO APP_NAME cuando se decida el del paquete.
+# El nombre (APP_NAME, DATA_DIR_ENV) vive solo en _app.py.
 # DATA_DIR solo se cambia con la variable de entorno, no con config_local.py:
 # las rutas derivadas se calculan aquí, antes de que config_local se aplique.
-APP_NAME = "motor"
-DATA_DIR_ENV = f"{APP_NAME.upper()}_HOME"
 DATA_DIR = Path(os.getenv(DATA_DIR_ENV) or Path.home() / f".{APP_NAME}").expanduser()
+# .env del usuario, ANTES de cualquier os.getenv de abajo. No pisa el entorno del shell.
+load_dotenv(DATA_DIR / ".env", override=False)
 PROJECTS_DIR = DATA_DIR / "projects"
 OUTPUT_DIR = DATA_DIR / "output"
 # deepeval lee esta variable al importarse; el motor lo importa después
