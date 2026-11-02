@@ -74,3 +74,12 @@ def undeclared_imports(pyproject: dict) -> list[str]:
 def test_imports_de_terceros_declarados():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert undeclared_imports(pyproject) == []
+
+
+def test_extra_rag_no_trae_torch():
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    extras = pyproject["project"]["optional-dependencies"]
+    rag = {_req_name(r) for r in extras["rag"]}
+    assert rag == {"chromadb"}
+    assert {_req_name(r) for r in extras["rerank"]} == {"sentence-transformers"}
+    assert {"chromadb", "mem0ai"} <= {_req_name(r) for r in extras["memory"]}

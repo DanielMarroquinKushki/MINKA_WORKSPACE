@@ -44,3 +44,22 @@ def test_cli_sale_sin_traceback(sin_backend, monkeypatch):
     assert "Sin backend LLM" in result.output
     assert "Traceback" not in result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+class _OrchFake:
+    last_run_ok = True
+    last_usage = None
+
+    def run(self, *a, **k):
+        return "Instala con 'minka-workspace[rag] @ git+x' y reintenta."
+
+
+def test_resultado_del_agente_sin_marcado_rich(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-de-prueba")
+    monkeypatch.setattr(config, "USE_BEDROCK", False)
+    monkeypatch.setattr(minka_main, "_make_orchestrator", lambda: _OrchFake())
+    runner = CliRunner()
+    directo = runner.invoke(minka_main.app, ["analiza algo", "--no-interactive"])
+    assert "minka-workspace[rag]" in directo.output
+    interactivo = runner.invoke(minka_main.app, [], input="analiza algo\nsalir\n")
+    assert "minka-workspace[rag]" in interactivo.output

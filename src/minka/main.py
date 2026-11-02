@@ -30,6 +30,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from minka.config_loader import config
+from minka.core.orchestrator.small_talk import CURRENT_REQUEST_MARKER
 
 app = typer.Typer(
     add_completion=False, help="Sistema multi-agente para desarrollo asistido por IA."
@@ -73,7 +74,7 @@ def _history_context(history: list[tuple[str, str]]) -> str:
     for i, (question, answer) in enumerate(history[-HISTORY_MAX_TURNS:], 1):
         parts.append(f"\n[Turno {i}] Dev: {question}")
         parts.append(f"[Turno {i}] Agente: {answer[:HISTORY_RESULT_CHARS]}")
-    parts.append("\n---\n\nPedido actual del dev:")
+    parts.append(f"\n---\n\n{CURRENT_REQUEST_MARKER}")
     return "\n".join(parts)
 
 
@@ -413,7 +414,8 @@ def main(
         except KeyboardInterrupt:
             console.print("\nSesión terminada. Hasta luego.")
             raise typer.Exit(code=130)
-        console.print(result)
+        # Texto del agente tal cual: sin marcado de Rich (no se come los [...]).
+        console.print(result, markup=False)
         # last_run_ok distingue "corrió y respondió" de "no pudo correr"
         # (p.ej. sesión AWS expirada, que devuelve un string, no una excepción).
         ok = getattr(orchestrator, "last_run_ok", True)
@@ -453,7 +455,7 @@ def main(
                 task_text = f"{_history_context(history)}\n{user_input}" if history else user_input
                 result = orchestrator.run(task_text, use_llm_planner=not no_llm_planner)
                 history.append((user_input, result))
-                console.print(f"\n{result}\n")
+                console.print(f"\n{result}\n", markup=False)
         except (KeyboardInterrupt, EOFError):
             pass
         console.print("\nSesión terminada. Hasta luego.")

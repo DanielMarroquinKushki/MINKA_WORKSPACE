@@ -22,7 +22,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-rag = ["chromadb>=1.5.9", "sentence-transformers>=6.0.0"]
+rag = ["chromadb>=1.5.9"]
+rerank = ["sentence-transformers>=6.0.0"]  # RERANK_ENABLED (trae torch)
 memory = ["mem0ai>=2.0.19", "chromadb>=1.5.9"]  # vector_memory.py usa ChromaDB como vector store
 obs = ["langfuse>=4.14.5"]
 dev = [

@@ -18,7 +18,8 @@ Después: `minka --init` (crea `config_local.py` y `.env` en `<DATA_DIR>`, sin
 sobrescribir), complétalos, corre `minka-sso` y luego `minka`. `<DATA_DIR>` es la
 variable `DATA_DIR_ENV` de `_app.py` o, si no está, `~/.<APP_NAME>/`.
 
-> Nivel 4 (RAG): instala con el extra (`uv tool install 'minka-workspace[rag] @ git+<url-del-repo>'`), pon `RAG_ENABLED=True` y luego
+> Nivel 4 (RAG): instala con el extra (`uv tool install 'minka-workspace[rag] @ git+<url-del-repo>'`;
+> el reranker opcional es `[rag,rerank]` y trae torch), pon `RAG_ENABLED=True` y luego
 > `minka --index-repos`.
 
 ---

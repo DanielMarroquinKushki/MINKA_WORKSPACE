@@ -228,6 +228,20 @@ else:
 
 # Minutos antes de expirar con los que se considera un token "por vencer".
 BEDROCK_REFRESH_BEFORE_MINUTES = 5
+# Saludos que se responden sin LLM (pedido completo, normalizado: minúsculas, sin
+# tildes ni puntuación). Ver core/orchestrator/small_talk.py.
+SMALL_TALK_MAX_WORDS = 4
+SMALL_TALK_PATTERNS = [
+    r"(hola|buenas|buenos dias|buenas tardes|buenas noches|hey|hi|hello)( minka)?",
+    r"(muchas )?gracias( minka)?|thanks|thank you",
+    r"ok|okay|vale|listo|perfecto|genial|dale|de acuerdo",
+    r"adios|chao|bye|hasta luego",
+]
+
+# Origen para reinstalar con extras. Vacío = se lee del paquete instalado
+# (direct_url.json, PEP 610); si no hay, queda el texto de ejemplo.
+INSTALL_SOURCE = ""
+
 # Tope para `aws sso login` (espera a que completes el login en el navegador).
 SSO_LOGIN_TIMEOUT_SECONDS = 300
 # Cliente Bedrock: lectura y conexión (httpx.Timeout) y reintentos del SDK.

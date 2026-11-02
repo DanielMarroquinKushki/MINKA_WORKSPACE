@@ -17,10 +17,22 @@ from rich.panel import Panel
 
 from minka.config_loader import config
 from minka.core.orchestrator.planner import make_plan
+from minka.core.orchestrator.small_talk import small_talk_reply
 from minka.core.orchestrator.state_manager import StateManager
 from minka.core.schemas import ReviewDecision
 
 console = Console()
+
+
+# Agentes disponibles (orden del saludo y claves del registro de _get_agent).
+AGENT_NAMES = (
+    "architecture_agent",
+    "development_agent",
+    "pr_review_agent",
+    "debug_agent",
+    "report_agent",
+    "meta_agent",
+)
 
 
 class Orchestrator:
@@ -50,14 +62,8 @@ class Orchestrator:
         from minka.core.agents.pr_review_agent import PRReviewAgent
         from minka.core.agents.report_agent import ReportAgent
 
-        registry = {
-            "architecture_agent": ArchitectureAgent,
-            "development_agent": DevelopmentAgent,
-            "pr_review_agent": PRReviewAgent,
-            "debug_agent": DebugAgent,
-            "report_agent": ReportAgent,
-            "meta_agent": MetaAgent,
-        }
+        classes = (ArchitectureAgent, DevelopmentAgent, PRReviewAgent, DebugAgent, ReportAgent, MetaAgent)
+        registry = dict(zip(AGENT_NAMES, classes))
         cls = registry.get(name)
         if cls is None:
             raise KeyError(f"Agente desconocido: {name}")
@@ -161,6 +167,12 @@ class Orchestrator:
     ) -> str:
         self.last_run_ok = True
         self.last_usage = {"per_agent": [], "totals": {}}
+
+        # Saludos/agradecimientos: respuesta fija, sin sesión AWS, planner ni agentes.
+        if not forced_agent:
+            reply = small_talk_reply(task, AGENT_NAMES)
+            if reply:
+                return reply
 
         # Antes de una tarea: sesión AWS utilizable (solo Bedrock). Login solo si
         # el token venció; sin TTY o sin red devuelve el mensaje, sin esperar.
