@@ -403,6 +403,84 @@ _register(
 )
 
 
+# --- Repos: alias en path/repo_path y list_repos ---------------------------
+# Parámetros de ruta que aceptan un alias de config.REPOS ("pos", "pos/sub/x.go").
+_PATH_PARAMS = ("path", "repo_path")
+# Tools que escriben: no pueden tocar el knowledge genérico del motor.
+_WRITE_TOOLS = {"write_file", "apply_diff", "create_branch", "commit_change"}
+_OUTSIDE = "fuera de los repos configurados; usa list_repos"
+
+
+def _repo_roots(repos: dict | None) -> dict[str, Path]:
+    """Alias → ruta REAL (resolve sigue los symlinks de repos/). Ignora vacíos."""
+    return {alias: Path(p).expanduser().resolve() for alias, p in (repos or {}).items() if p}
+
+
+def _allowed_roots(tool_name: str, repo_roots: dict[str, Path]) -> list[Path]:
+    """Repos + datos legítimos del motor: proyecto activo (knowledge, decisions_log),
+    output/ (reportes) y, solo para lectura, el knowledge genérico del paquete."""
+    roots = list(repo_roots.values())
+    project = getattr(config, "ACTIVE_PROJECT", None)
+    if project:
+        roots.append((Path(config.PROJECTS_DIR) / project).resolve())
+    roots.append(Path(config.OUTPUT_DIR).resolve())
+    if tool_name not in _WRITE_TOOLS:
+        roots.append(Path(config.KNOWLEDGE_DIR).resolve())
+    return roots
+
+
+def resolve_repo_paths(tool_name: str, kwargs: dict, repos: dict | None) -> tuple[dict, str | None]:
+    """Resuelve alias de REPOS en path/repo_path a la ruta real. Devuelve
+    (kwargs, None) o (kwargs, error). Sin repos configurados no restringe nada."""
+    roots = _repo_roots(repos)
+    if not roots:
+        return kwargs, None
+    allowed = _allowed_roots(tool_name, roots)
+    out = dict(kwargs)
+    for key in _PATH_PARAMS:
+        value = out.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        alias, _, rest = value.partition("/")
+        if alias in roots:
+            base = roots[alias]
+            candidate = (base / rest).resolve() if rest else base
+            if not candidate.is_relative_to(base):  # ".." o symlink que sale del repo
+                return kwargs, f"ERROR: '{value}' sale del repo '{alias}' ({_OUTSIDE})."
+        else:
+            candidate = Path(value).expanduser().resolve()
+            if not any(candidate.is_relative_to(root) for root in allowed):
+                return kwargs, f"ERROR: '{value}' está {_OUTSIDE}."
+        out[key] = str(candidate)
+    return out, None
+
+
+def list_repos() -> str:
+    """Repos configurados: alias → ruta real y si existe."""
+    roots = _repo_roots(getattr(config, "REPOS", {}))
+    if not roots:
+        return (
+            "No hay repos configurados: define REPOS en "
+            f"{Path(config.DATA_DIR) / 'config_local.py'}."
+        )
+    return "\n".join(
+        f"{alias} → {path} (existe: {'sí' if path.is_dir() else 'no'})"
+        for alias, path in roots.items()
+    )
+
+
+_register(
+    "list_repos",
+    list_repos,
+    "Lista los repos configurados (alias → ruta). En las demás tools puedes usar el "
+    "alias, o 'alias/subruta', como path o repo_path.",
+    {},
+    [],
+)
+# Disponible para todos los agentes (solo lectura), sin tocar AGENT_TOOLS.
+_ALWAYS_TOOLS = ("list_repos",)
+
+
 # Perfiles de tools por agente: viven en config.AGENT_TOOLS (parametrizable
 # por proyecto — Arnés Global). Seguridad por diseño: solo development_agent
 # accede a escritura/git de commit.
@@ -414,7 +492,8 @@ class ToolRegistry:
     @staticmethod
     def get_tools_for_agent(agent_name: str) -> list[dict]:
         """Devuelve los schemas Anthropic de las tools permitidas al agente."""
-        names = getattr(config, "AGENT_TOOLS", {}).get(agent_name, [])
+        names = list(getattr(config, "AGENT_TOOLS", {}).get(agent_name, []))
+        names += [n for n in _ALWAYS_TOOLS if n not in names]
         return [_TOOLS[n].to_anthropic() for n in names if n in _TOOLS]
 
     @staticmethod

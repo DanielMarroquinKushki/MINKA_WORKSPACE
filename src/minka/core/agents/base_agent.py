@@ -27,7 +27,7 @@ from minka.core.knowledge.loader import KnowledgeLoader
 from minka.core.memory.session_memory import SessionMemory
 from minka.core.memory.vector_memory import VectorMemory
 from minka.core.observability import trace
-from minka.core.tools.registry import ToolRegistry
+from minka.core.tools.registry import ToolRegistry, resolve_repo_paths
 
 console = Console()
 
@@ -306,7 +306,11 @@ class BaseAgent(ABC):
                 # También si el LLM mandó un dict vacío (falso negativo de drift).
                 if block.name == "check_version_drift" and not kwargs.get("repos"):
                     kwargs["repos"] = self.config.REPOS
-                output = tool_fn(**kwargs)
+                # Alias de REPOS → ruta real ANTES de la tool (y del ApprovalGate).
+                kwargs, path_error = resolve_repo_paths(
+                    block.name, kwargs, getattr(self.config, "REPOS", {})
+                )
+                output = path_error or tool_fn(**kwargs)
                 if getattr(self.config, "DEBUG", False):
                     console.print(f"    [dim]result:[/dim] {str(output)[:600]}")
                 results.append(
