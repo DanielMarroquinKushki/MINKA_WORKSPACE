@@ -96,12 +96,15 @@ def _is_interactive() -> bool:
 def build_anthropic_bedrock(cfg) -> Any:
     """Cliente AnthropicBedrock con perfil, región y timeouts de `cfg` (único lugar)."""
     import anthropic
-    import httpx
 
+    # anthropic.Timeout lo reexporta el SDK (httpx o httpx2 según versión): sin
+    # depender del cliente HTTP que traiga cada versión.
     return anthropic.AnthropicBedrock(
         aws_profile=cfg.AWS_PROFILE,
         aws_region=cfg.AWS_REGION,
-        timeout=httpx.Timeout(cfg.BEDROCK_TIMEOUT_SECONDS, connect=cfg.BEDROCK_CONNECT_TIMEOUT_SECONDS),
+        timeout=anthropic.Timeout(
+            cfg.BEDROCK_TIMEOUT_SECONDS, connect=cfg.BEDROCK_CONNECT_TIMEOUT_SECONDS
+        ),
         max_retries=cfg.BEDROCK_MAX_RETRIES,
     )
 
