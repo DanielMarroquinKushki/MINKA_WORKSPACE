@@ -504,6 +504,9 @@ def main(
     orchestrator.source = "cli" if task else "repl"
     orchestrator.quiet = quiet
     orchestrator.read_only = read_only or os.getenv(SOURCE_ENV) == "bridge"
+    # Flags de runtime que leen los agentes (avisos en stderr, progreso en TTY).
+    config.QUIET = quiet
+    config.PROGRESS_ENABLED = json_out is None
 
     if task:
         try:
@@ -636,7 +639,8 @@ def stats(
     routers = " · ".join(f"{k} {v}" for k, v in sorted(agg["routers"].items()))
     console.print(
         f"[dim]router: {routers}     fix-loop: {agg['fix_loop_runs']} corrida(s), "
-        f"{agg['fix_loop_iters']} iteraciones[/dim]"
+        f"{agg['fix_loop_iters']} iteraciones     tools repetidas bloqueadas: "
+        f"{agg['repeated_tool_calls']}[/dim]"
     )
 
 

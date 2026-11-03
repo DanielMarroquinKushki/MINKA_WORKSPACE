@@ -160,6 +160,7 @@ class Orchestrator:
                 # se tarifa a 1.25x en bridge.py y queda subestimado.
                 "cache_creation_5m",
                 "cache_creation_1h",
+                "repeated_tool_calls",
             ):
                 totals[key] = totals.get(key, 0) + usage.get(key, 0)
         except Exception:  # noqa: BLE001 — métricas best-effort
@@ -236,6 +237,9 @@ class Orchestrator:
                 usage=self.last_usage,
                 reason=self.last_reason,
                 confidence=self.last_confidence,
+                planner_error=getattr(self.last_decision, "planner_error", None),
+                reasoning=getattr(self.last_decision, "reasoning", None),
+                planner_retries=getattr(self.last_decision, "retries", 0),
             )
         except Exception:  # noqa: BLE001
             return {}
@@ -307,6 +311,8 @@ class Orchestrator:
                     request, context, use_llm_planner, self.session_turns, repos
                 )
             self._apply_decision(decision)
+            if decision.reply is not None:  # planner sin plan / sin cambios que revisar
+                return decision.reply
             if self.read_only and any(a not in router.READONLY_AGENTS for a in decision.agents):
                 self.last_run_ok = False
                 self.last_exit_code = 2
@@ -325,7 +331,8 @@ class Orchestrator:
         console.print(
             Panel(
                 "\n".join(
-                    f"{i}. [cyan]{s['agent']}[/cyan] — {s['task'][:80]}"
+                    # Solo el pedido, sin el prefijo de historial que antepone main.py.
+                    f"{i}. [cyan]{s['agent']}[/cyan] — {router.split_request(s['task'])[1][:80]}"
                     for i, s in enumerate(plan, 1)
                 ),
                 title="Plan de ejecución",
@@ -433,13 +440,19 @@ class Orchestrator:
 
             four_r = run_four_r_review(dev_result, build_llm_client())
             if four_r is not None:
-                console.print(
-                    Panel(
-                        four_r.summary,
-                        title="[magenta]Revisión 4R[/magenta]",
-                        border_style="magenta",
+                # La decisión de routing es interna: al dev solo el conteo (detalle con --debug).
+                if getattr(config, "DEBUG", False):
+                    console.print(
+                        Panel(
+                            four_r.summary,
+                            title="[magenta]Revisión 4R[/magenta]",
+                            border_style="magenta",
+                        )
                     )
-                )
+                else:
+                    console.print(
+                        f"[dim]Revisión 4R: {len(four_r.blockers)} hallazgo(s) bloqueante(s).[/dim]"
+                    )
                 self.state.record_step("four_r_review", "Revisión 4R del candidato", four_r.summary)
                 routing = four_r.routing_decision
                 review_result = four_r.summary

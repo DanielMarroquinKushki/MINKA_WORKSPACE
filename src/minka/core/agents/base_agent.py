@@ -16,13 +16,16 @@ import json
 import os
 import sys
 from abc import ABC, abstractmethod
+from collections import Counter
 from datetime import datetime, timezone
 
 import anthropic
 from rich.console import Console
 from rich.panel import Panel
 
+from minka._app import QUIET_ENV
 from minka.config_loader import config
+from minka.core import progress
 from minka.core.knowledge.loader import KnowledgeLoader
 from minka.core.memory.session_memory import SessionMemory
 from minka.core.memory.vector_memory import VectorMemory
@@ -30,6 +33,8 @@ from minka.core.observability import trace
 from minka.core.tools.registry import ToolRegistry, resolve_repo_paths
 
 console = Console()
+# Avisos al dev (p.ej. tool repetida) sin mezclarse con el resultado en stdout.
+stderr_console = Console(stderr=True)
 
 
 _backend_warned = False
@@ -138,6 +143,8 @@ class BaseAgent(ABC):
             # Desglose del write por TTL: confirma cuál se usó de verdad.
             "cache_creation_5m": 0,
             "cache_creation_1h": 0,
+            # Llamadas idénticas a una tool bloqueadas por TOOL_REPEAT_LIMIT.
+            "repeated_tool_calls": 0,
         }
 
     def _accumulate_usage(self, response) -> None:
@@ -186,12 +193,14 @@ class BaseAgent(ABC):
     def run(self, task: str) -> str:
         console.print(Panel(f"[bold]{self.name}[/bold] recibió tarea", style="blue"))
 
-        with trace(f"agent:{self.name}", agent=self.name):
+        with trace(f"agent:{self.name}", agent=self.name), progress.track(self.name) as prog:
+            self._progress = prog
             recalled = self._recall_memories(task)
             user_content = f"{recalled}\n\n{task}" if recalled else task
             messages = self.memory.get_context() + [{"role": "user", "content": user_content}]
             self.iteration_count = 0
             self.last_usage = self._empty_usage()
+            self._tool_calls_seen = Counter()
 
             # Se construye UNA vez, fuera del loop: el prefijo cacheado debe ser
             # byte-idéntico en cada iteración o el cache no acierta.
@@ -199,6 +208,7 @@ class BaseAgent(ABC):
 
             while self.iteration_count < self.max_iterations:
                 self.iteration_count += 1
+                prog.update(iteration=self.iteration_count, status="esperando al modelo")
 
                 response = self.client.messages.create(
                     model=self._model(),
@@ -208,6 +218,11 @@ class BaseAgent(ABC):
                     messages=messages,
                 )
                 self._accumulate_usage(response)
+                usage = getattr(response, "usage", None)
+                prog.update(
+                    tokens_in=getattr(usage, "input_tokens", None),
+                    tokens_out=getattr(usage, "output_tokens", None),
+                )
 
                 if response.stop_reason == "tool_use":
                     tool_results = self._execute_tools(response)
@@ -291,10 +306,46 @@ class BaseAgent(ABC):
 
     def _execute_tools(self, response) -> list:
         results = []
+        seen = getattr(self, "_tool_calls_seen", None)
+        if seen is None:
+            seen = self._tool_calls_seen = Counter()
+        limit = int(getattr(self.config, "TOOL_REPEAT_LIMIT", 3) or 0)
+        prog = getattr(self, "_progress", None)
         for block in response.content:
             if block.type != "tool_use":
                 continue
             console.print(f"  [dim]→ Tool:[/dim] [cyan]{block.name}[/cyan]")
+            if prog is not None:
+                prog.update(status=f"tool {block.name}")
+            # Tope de llamadas idénticas (misma tool, mismos argumentos) por corrida:
+            # corta los loops en que el modelo repite la misma lectura.
+            key = (block.name, json.dumps(dict(block.input), sort_keys=True, default=str))
+            seen[key] += 1
+            if limit and seen[key] > limit:
+                self.last_usage["repeated_tool_calls"] = (
+                    self.last_usage.get("repeated_tool_calls", 0) + 1
+                )
+                msg = (
+                    f"Llamada repetida: {block.name} con los mismos argumentos ya se ejecutó "
+                    f"{limit} veces en esta corrida. Usa el resultado anterior."
+                )
+                if not (getattr(self.config, "QUIET", False) or os.getenv(QUIET_ENV)):
+                    stderr_console.print(
+                        f"⚠ {self.name}: {msg}",
+                        markup=False,
+                        highlight=False,
+                        soft_wrap=True,
+                        style="yellow",
+                    )
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": f"ERROR: {msg}",
+                        "is_error": True,
+                    }
+                )
+                continue
             if getattr(self.config, "DEBUG", False):
                 console.print(
                     f"    [dim]input:[/dim] {json.dumps(dict(block.input), ensure_ascii=False)[:600]}"

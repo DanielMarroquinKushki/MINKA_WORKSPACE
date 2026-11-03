@@ -89,3 +89,19 @@ def commit_change(repo_path: str, message: str, paths: list[str] | None = None) 
     if code != 0:
         return f"ERROR git commit: {err or out}"
     return f"OK commit: {out}"
+
+
+def has_pending_changes(repo_path: str) -> bool | None:
+    """Solo lectura: True si el árbol tiene cambios (status --porcelain, incluye
+    untracked) o diff contra HEAD; False si está limpio; None si no se pudo saber."""
+    code, out, _ = _run_git(repo_path, ["status", "--porcelain"])
+    if code != 0:
+        return None
+    if out:
+        return True
+    code, _, _ = _run_git(repo_path, ["diff", "--quiet", "HEAD"])
+    if code == 0:
+        return False
+    if code == 1:
+        return True
+    return None

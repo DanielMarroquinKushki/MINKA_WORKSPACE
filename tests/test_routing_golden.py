@@ -13,8 +13,10 @@ import pytest
 import minka
 from minka.config_loader import config
 from minka.core.orchestrator import planner
+from minka.core.orchestrator import router as router_mod
 from minka.core.orchestrator.orchestrator import Orchestrator
 from minka.core.orchestrator.router import CURRENT_REQUEST_MARKER
+from minka.core.structured import StructuredError
 
 CASES = json.loads(
     (Path(minka.__file__).parent / "core" / "evals" / "routing_cases.json").read_text("utf-8")
@@ -50,11 +52,14 @@ def harness(monkeypatch, tmp_path):
     def fake_llm(task, context=""):
         state.llm_calls += 1
         assert CURRENT_REQUEST_MARKER not in task and "Historial" not in task
-        if state.llm_plan is None:
-            return None
-        return [{"agent": a, "task": f"paso para {a}"} for a in state.llm_plan]
+        if state.llm_plan is None:  # el LLM falló
+            return planner.LLMPlan(None, StructuredError("api", "RuntimeError", "boom"))
+        # [] = respondió sin pasos (empty_plan)
+        return planner.LLMPlan([{"agent": a, "task": f"paso para {a}"} for a in state.llm_plan])
 
     monkeypatch.setattr(planner, "_llm_plan", fake_llm)
+    # Sin repo real: "no se pudo saber" → nunca atajo de "sin cambios" salvo que un test lo fuerce.
+    monkeypatch.setattr(router_mod.git_tools, "has_pending_changes", lambda path: None)
     orch = Orchestrator()
     monkeypatch.setattr(orch, "_get_agent", lambda n: (state.ran.append(n), _FakeAgent(n))[1])
     monkeypatch.setattr(orch, "_stderr", SimpleNamespace(print=lambda text, **kw: state.lines.append(text)))
@@ -90,7 +95,7 @@ def test_casos_cubren_los_12_tipos_y_son_genericos():
         "stack_trace", "implementar", "reporte", "ambiguo_sin_historial", "meta", "seguimiento_hereda",
     ):
         assert tipo in ids
-    assert len(CASES) >= 20
+    assert len(CASES) >= 28
     raw = json.dumps(CASES).lower()
     assert not any(w in raw for w in ("kushki", "credibanco", "amex", "usrv"))
 
@@ -125,3 +130,55 @@ def test_sesion_registra_turnos_y_clear_los_borra(harness):
     assert harness.orch.session_turns[0]["agents"] == ["architecture_agent"]
     harness.orch.clear_session()
     assert harness.orch.session_turns == []
+
+
+def test_pr_review_sin_cambios_responde_sin_agente(harness, monkeypatch):
+    monkeypatch.setattr(router_mod.git_tools, "has_pending_changes", lambda path: False)
+    harness.llm_plan = ["pr_review_agent"]
+    out = harness.orch.run("revisa el diff del repo pagos")
+    assert harness.ran == [] and harness.orch.last_router == "no_changes"
+    assert "No hay cambios que revisar en pagos" in out
+    assert "→ sin agente (sin cambios que revisar)" in harness.lines[0]
+
+
+def test_pr_review_con_rama_citada_revisa_lo_citado(harness, monkeypatch):
+    consultas = []
+    monkeypatch.setattr(
+        router_mod.git_tools, "has_pending_changes", lambda path: (consultas.append(path), False)[1]
+    )
+    harness.llm_plan = ["pr_review_agent"]
+    harness.orch.run("revisa el diff de la rama feature/login en pagos")
+    assert harness.ran == ["pr_review_agent"] and consultas == []
+    harness.ran.clear()
+    harness.orch.run("revisa el commit 3f2a9c1 de pagos")
+    assert harness.ran == ["pr_review_agent"] and consultas == []
+
+
+def test_pr_review_con_cambios_pendientes_lanza_el_agente(harness, monkeypatch):
+    monkeypatch.setattr(router_mod.git_tools, "has_pending_changes", lambda path: True)
+    harness.llm_plan = ["pr_review_agent"]
+    harness.orch.run("revisa el diff del repo pagos")
+    assert harness.ran == ["pr_review_agent"]
+
+
+def test_debug_muestra_planner_error_y_reasoning(harness, monkeypatch):
+    monkeypatch.setattr(config, "DEBUG", True)
+    harness.llm_plan = None
+    harness.orch.run("analiza las dependencias del módulo de pagos")
+    assert "planner_error: api RuntimeError: boom" in harness.lines[0]
+    assert harness.orch.last_run_record["planner_error"] == {
+        "kind": "api", "class": "RuntimeError", "message": "boom"
+    }
+
+
+def test_reasoning_llega_a_metrics_y_a_debug(harness, monkeypatch):
+    monkeypatch.setattr(config, "DEBUG", True)
+    monkeypatch.setattr(
+        planner, "_llm_plan",
+        lambda task, context="": planner.LLMPlan(
+            [{"agent": "architecture_agent", "task": "paso"}], reasoning="consulta de arquitectura"
+        ),
+    )
+    harness.orch.run("¿dónde se resuelve el cálculo de comisiones?")
+    assert harness.orch.last_run_record["reasoning"] == "consulta de arquitectura"
+    assert "reasoning: consulta de arquitectura" in harness.lines[0]

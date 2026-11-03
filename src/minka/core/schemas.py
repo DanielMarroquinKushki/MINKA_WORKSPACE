@@ -36,6 +36,10 @@ class Plan(BaseModel):
         default_factory=list,
         description="Pasos en orden de ejecución. Vacío si no aplica.",
     )
+    # Opcional: el prompt lo pide ("reasoning") y antes se perdía. Solo métricas y --debug.
+    reasoning: str | None = Field(
+        default=None, description="Por qué se eligieron estos agentes (breve)."
+    )
 
 
 class ReviewDecision(BaseModel):

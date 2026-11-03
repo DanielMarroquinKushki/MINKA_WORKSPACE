@@ -1,27 +1,570 @@
 {
-  "_doc": "Casos golden del router (genéricos). llm = plan que devolvería el planner LLM simulado (null = el LLM falló; ausente = no debe llamarse). turns = turnos previos de la sesión. El fixture configura REPOS={'pagos': ...}.",
+  "_doc": "Casos golden del router (genéricos). llm = plan del planner LLM simulado: lista de agentes; [] = respondió sin pasos (empty_plan); null = error del LLM; ausente = no debe llamarse. turns = turnos previos de la sesión. El fixture configura REPOS={'pagos': ...}.",
   "cases": [
-    {"id": "saludo", "request": "hola", "expect": {"agents": [], "router": "small_talk", "llm_called": false, "reply_contains": ["Agentes disponibles"], "line_contains": ["→ sin agente (saludo)"]}},
-    {"id": "agradecimiento", "request": "¡Gracias!", "expect": {"agents": [], "router": "small_talk", "llm_called": false}},
-    {"id": "estado_con_turnos", "request": "¿en qué quedamos?", "turns": [{"request": "analiza el flujo de pagos", "agents": ["architecture_agent"]}], "expect": {"agents": [], "router": "state", "llm_called": false, "reply_contains": ["No tengo contexto del proyecto", "analiza el flujo de pagos", "architecture"], "line_contains": ["estado de la sesión"]}},
-    {"id": "estado_sin_turnos", "request": "qué hicimos", "expect": {"agents": [], "router": "state", "llm_called": false, "reply_contains": ["no hay turnos"]}},
-    {"id": "negativo_estado_es_dominio", "request": "estado de la transacción", "llm": ["architecture_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "line_contains": ["→ architecture (consulta de código)"]}},
-    {"id": "donde_se_resuelve", "request": "¿dónde se resuelve el cálculo de comisiones?", "llm": ["architecture_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "line_contains": ["→ architecture (consulta de código)"]}},
-    {"id": "flujo", "request": "explica el flujo de autenticación desde el handler hasta la base de datos", "llm": ["architecture_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "confidence": "media"}},
-    {"id": "riesgos", "request": "detecta riesgos en el repo pagos", "llm": ["architecture_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "confidence": "alta"}},
-    {"id": "revisar_diff", "request": "revisa el diff de la rama feature/login", "llm": ["pr_review_agent"], "expect": {"agents": ["pr_review_agent"], "router": "llm", "llm_called": true, "confidence": "alta", "line_contains": ["→ pr_review (revisión de cambios)"]}},
-    {"id": "negativo_pr_review_sin_diff", "request": "revisa los contratos del equipo", "llm": ["pr_review_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "confidence": "baja", "line_contains": ["regla: pr_review exige diff, PR o rama → architecture"]}},
-    {"id": "stack_trace", "request": "¿por qué falla? panic: runtime error: invalid memory address en handler.go:42", "llm": ["debug_agent"], "expect": {"agents": ["debug_agent"], "router": "llm", "llm_called": true, "line_contains": ["→ debug (diagnóstico de fallo)"]}},
-    {"id": "negativo_debug_sin_fallo", "request": "depura la situación con el proveedor", "llm": ["debug_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "line_contains": ["regla: debug exige un fallo o código citado → architecture"]}},
-    {"id": "implementar", "request": "implementa validación de entrada en internal/api/handler.go", "llm": ["development_agent"], "expect": {"agents": ["development_agent"], "router": "llm", "llm_called": true, "confidence": "alta", "line_contains": ["→ development (cambio de código)"]}},
-    {"id": "negativo_arregla_sin_codigo", "request": "arregla la agenda de la reunión del jueves", "llm": ["development_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "confidence": "baja", "line_contains": ["regla: development exige verbo de escritura y código citado → architecture"]}},
-    {"id": "negativo_codigo_sin_verbo", "request": "el archivo config.go debería aceptar variables de entorno", "llm": ["development_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "line_contains": ["regla: development"]}},
-    {"id": "reporte", "request": "genera un reporte del análisis anterior", "turns": [{"request": "analiza dependencias", "agents": ["architecture_agent"]}], "llm": ["report_agent"], "expect": {"agents": ["report_agent"], "router": "llm", "llm_called": true, "line_contains": ["→ report (reporte)"]}},
-    {"id": "negativo_report_sin_pedido", "request": "¿qué cubre el módulo de pagos?", "llm": ["report_agent"], "expect": {"agents": ["architecture_agent"], "router": "llm", "llm_called": true, "line_contains": ["regla: report exige pedir un reporte o un resultado previo → architecture"]}},
-    {"id": "ambiguo_sin_historial", "request": "¿y eso?", "expect": {"agents": [], "router": "ambiguous", "llm_called": false, "reply_contains": ["ambiguo"], "line_contains": ["→ sin agente (ambiguo: precisa el pedido)"]}},
-    {"id": "seguimiento_hereda", "request": "¿y en el otro repo?", "turns": [{"request": "analiza el flujo de pagos", "agents": ["architecture_agent"]}], "expect": {"agents": ["architecture_agent"], "router": "inherit", "llm_called": false, "line_contains": ["→ architecture (hereda turno previo)"]}},
-    {"id": "meta", "request": "¿qué puedes hacer?", "expect": {"agents": [], "router": "meta", "llm_called": false, "reply_contains": ["stats", "architecture"], "line_contains": ["meta sobre"]}},
-    {"id": "planner_llm_falla", "request": "analiza las dependencias del módulo de pagos", "llm": null, "expect": {"agents": ["architecture_agent"], "router": "keyword", "llm_called": true, "confidence": "baja", "line_contains": ["planner LLM falló, keywords"]}},
-    {"id": "plan_dos_pasos", "request": "analiza y luego implementa el cambio en internal/api/handler.go", "llm": ["architecture_agent", "development_agent"], "expect": {"agents": ["architecture_agent", "development_agent"], "router": "llm", "llm_called": true, "line_contains": ["→ architecture → development (plan de 2 pasos)"]}}
+    {
+      "id": "saludo",
+      "request": "hola",
+      "expect": {
+        "agents": [],
+        "router": "small_talk",
+        "llm_called": false,
+        "reply_contains": [
+          "Agentes disponibles"
+        ],
+        "line_contains": [
+          "→ sin agente (saludo)"
+        ]
+      }
+    },
+    {
+      "id": "agradecimiento",
+      "request": "¡Gracias!",
+      "expect": {
+        "agents": [],
+        "router": "small_talk",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "estado_con_turnos",
+      "request": "¿en qué quedamos?",
+      "turns": [
+        {
+          "request": "analiza el flujo de pagos",
+          "agents": [
+            "architecture_agent"
+          ]
+        }
+      ],
+      "expect": {
+        "agents": [],
+        "router": "state",
+        "llm_called": false,
+        "reply_contains": [
+          "No tengo contexto del proyecto",
+          "analiza el flujo de pagos",
+          "architecture"
+        ],
+        "line_contains": [
+          "estado de la sesión"
+        ]
+      }
+    },
+    {
+      "id": "estado_sin_turnos",
+      "request": "qué hicimos",
+      "expect": {
+        "agents": [],
+        "router": "state",
+        "llm_called": false,
+        "reply_contains": [
+          "no hay turnos"
+        ]
+      }
+    },
+    {
+      "id": "negativo_estado_es_dominio",
+      "request": "estado de la transacción",
+      "llm": [
+        "architecture_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (consulta de código)"
+        ]
+      }
+    },
+    {
+      "id": "donde_se_resuelve",
+      "request": "¿dónde se resuelve el cálculo de comisiones?",
+      "llm": [
+        "architecture_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (consulta de código)"
+        ]
+      }
+    },
+    {
+      "id": "flujo",
+      "request": "explica el flujo de autenticación desde el handler hasta la base de datos",
+      "llm": [
+        "architecture_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "confidence": "media"
+      }
+    },
+    {
+      "id": "riesgos",
+      "request": "detecta riesgos en el repo pagos",
+      "llm": [
+        "architecture_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "confidence": "alta"
+      }
+    },
+    {
+      "id": "revisar_diff",
+      "request": "revisa el diff de la rama feature/login",
+      "llm": [
+        "pr_review_agent"
+      ],
+      "expect": {
+        "agents": [
+          "pr_review_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "confidence": "alta",
+        "line_contains": [
+          "→ pr_review (revisión de cambios)"
+        ]
+      }
+    },
+    {
+      "id": "negativo_pr_review_sin_diff",
+      "request": "revisa los contratos del equipo",
+      "llm": [
+        "pr_review_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "confidence": "baja",
+        "line_contains": [
+          "regla: pr_review exige diff, PR o rama → architecture"
+        ]
+      }
+    },
+    {
+      "id": "stack_trace",
+      "request": "¿por qué falla? panic: runtime error: invalid memory address en handler.go:42",
+      "llm": [
+        "debug_agent"
+      ],
+      "expect": {
+        "agents": [
+          "debug_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "→ debug (diagnóstico de fallo)"
+        ]
+      }
+    },
+    {
+      "id": "negativo_debug_sin_fallo",
+      "request": "depura la situación con el proveedor",
+      "llm": [
+        "debug_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "regla: debug exige un fallo o código citado → architecture"
+        ]
+      }
+    },
+    {
+      "id": "implementar",
+      "request": "implementa validación de entrada en internal/api/handler.go",
+      "llm": [
+        "development_agent"
+      ],
+      "expect": {
+        "agents": [
+          "development_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "confidence": "alta",
+        "line_contains": [
+          "→ development (cambio de código)"
+        ]
+      }
+    },
+    {
+      "id": "negativo_arregla_sin_codigo",
+      "request": "arregla la agenda de la reunión del jueves",
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "reply_contains": [
+          "ambiguo"
+        ],
+        "line_contains": [
+          "→ sin agente (ambiguo: precisa el pedido)"
+        ]
+      }
+    },
+    {
+      "id": "negativo_codigo_sin_verbo",
+      "request": "el archivo config.go debería aceptar variables de entorno",
+      "llm": [
+        "development_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "regla: development"
+        ]
+      }
+    },
+    {
+      "id": "reporte",
+      "request": "genera un reporte del análisis anterior",
+      "turns": [
+        {
+          "request": "analiza dependencias",
+          "agents": [
+            "architecture_agent"
+          ]
+        }
+      ],
+      "llm": [
+        "report_agent"
+      ],
+      "expect": {
+        "agents": [
+          "report_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "→ report (reporte)"
+        ]
+      }
+    },
+    {
+      "id": "negativo_report_sin_pedido",
+      "request": "¿qué cubre el módulo de pagos?",
+      "llm": [
+        "report_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "regla: report exige pedir un reporte o un resultado previo → architecture"
+        ]
+      }
+    },
+    {
+      "id": "ambiguo_sin_historial",
+      "request": "¿y eso?",
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "reply_contains": [
+          "ambiguo"
+        ],
+        "line_contains": [
+          "→ sin agente (ambiguo: precisa el pedido)"
+        ]
+      }
+    },
+    {
+      "id": "seguimiento_hereda",
+      "request": "¿y en el otro repo?",
+      "turns": [
+        {
+          "request": "analiza el flujo de pagos",
+          "agents": [
+            "architecture_agent"
+          ]
+        }
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "inherit",
+        "llm_called": false,
+        "line_contains": [
+          "→ architecture (hereda turno previo)"
+        ]
+      }
+    },
+    {
+      "id": "meta",
+      "request": "¿qué puedes hacer?",
+      "expect": {
+        "agents": [],
+        "router": "meta",
+        "llm_called": false,
+        "reply_contains": [
+          "stats",
+          "architecture"
+        ],
+        "line_contains": [
+          "meta sobre"
+        ]
+      }
+    },
+    {
+      "id": "planner_llm_falla",
+      "request": "analiza las dependencias del módulo de pagos",
+      "llm": null,
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "keyword",
+        "llm_called": true,
+        "confidence": "baja",
+        "line_contains": [
+          "planner LLM: api, keywords"
+        ]
+      }
+    },
+    {
+      "id": "plan_dos_pasos",
+      "request": "analiza y luego implementa el cambio en internal/api/handler.go",
+      "llm": [
+        "architecture_agent",
+        "development_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent",
+          "development_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture → development (plan de 2 pasos)"
+        ]
+      }
+    },
+    {
+      "id": "arregla_el_bug_sin_codigo",
+      "request": "arregla el bug",
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "reply_contains": [
+          "sobre qué código"
+        ],
+        "line_contains": [
+          "→ sin agente (ambiguo: precisa el pedido)"
+        ]
+      }
+    },
+    {
+      "id": "arregla_el_bug_con_historial",
+      "request": "arregla el bug",
+      "turns": [
+        {
+          "request": "implementa la validación en internal/api/handler.go",
+          "agents": [
+            "development_agent"
+          ]
+        }
+      ],
+      "expect": {
+        "agents": [
+          "development_agent"
+        ],
+        "router": "inherit",
+        "llm_called": false,
+        "line_contains": [
+          "→ development (hereda turno previo)"
+        ]
+      }
+    },
+    {
+      "id": "gracias_por_todo_sin_plan",
+      "request": "gracias por todo",
+      "llm": [],
+      "expect": {
+        "agents": [],
+        "router": "no_plan",
+        "llm_called": true,
+        "reply_contains": [
+          "No identifiqué una tarea"
+        ],
+        "line_contains": [
+          "→ sin agente (planner: sin plan)"
+        ]
+      }
+    },
+    {
+      "id": "seguimiento_sin_plan_hereda",
+      "request": "aplica lo mismo al servicio de notificaciones",
+      "turns": [
+        {
+          "request": "analiza el flujo de pagos",
+          "agents": [
+            "architecture_agent"
+          ]
+        }
+      ],
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "inherit",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (hereda turno previo) · planner: sin plan"
+        ]
+      }
+    },
+    {
+      "id": "buenas_tardes_equipo",
+      "request": "buenas tardes equipo",
+      "llm": [],
+      "expect": {
+        "agents": [],
+        "router": "no_plan",
+        "llm_called": true,
+        "reply_contains": [
+          "No identifiqué una tarea"
+        ]
+      }
+    },
+    {
+      "id": "ok_perfecto",
+      "request": "ok, perfecto",
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "no_entiendo",
+      "request": "no entiendo",
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "reply_contains": [
+          "ambiguo"
+        ]
+      }
+    },
+    {
+      "id": "cuentame_un_chiste",
+      "request": "cuéntame un chiste",
+      "llm": [],
+      "expect": {
+        "agents": [],
+        "router": "no_plan",
+        "llm_called": true
+      }
+    },
+    {
+      "id": "que_opinas_con_historial",
+      "request": "¿qué opinas?",
+      "turns": [
+        {
+          "request": "analiza el flujo de pagos",
+          "agents": [
+            "architecture_agent"
+          ]
+        }
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "inherit",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "sigue_con_historial",
+      "request": "sigue",
+      "turns": [
+        {
+          "request": "¿por qué falla el handler.go?",
+          "agents": [
+            "debug_agent"
+          ]
+        }
+      ],
+      "expect": {
+        "agents": [
+          "debug_agent"
+        ],
+        "router": "inherit",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "me_explicas_que_puedes_hacer",
+      "request": "¿me explicas qué puedes hacer?",
+      "expect": {
+        "agents": [],
+        "router": "meta",
+        "llm_called": false,
+        "reply_contains": [
+          "Agentes"
+        ]
+      }
+    },
+    {
+      "id": "en_que_quedamos_ayer",
+      "request": "¿en qué quedamos ayer?",
+      "turns": [
+        {
+          "request": "analiza el flujo de pagos",
+          "agents": [
+            "architecture_agent"
+          ]
+        }
+      ],
+      "expect": {
+        "agents": [],
+        "router": "state",
+        "llm_called": false,
+        "reply_contains": [
+          "analiza el flujo de pagos"
+        ]
+      }
+    }
   ]
 }

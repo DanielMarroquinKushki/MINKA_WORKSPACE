@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from minka._app import APP_NAME
 from minka.config_loader import config
 from minka.core.orchestrator.planner import _ROUTING, plan_with_router
+from minka.core.tools.git import git_tools
 
 CURRENT_REQUEST_MARKER = "Pedido actual del dev:"
 
@@ -93,8 +94,21 @@ class RouteDecision:
     steps: list[dict] = field(default_factory=list)
     reply: str | None = None
     confidence: str = "media"
-    llm_failed: bool = False
     notices: list[str] = field(default_factory=list)
+    # Del planner LLM: por qué no hubo plan (kind/class/message), su reasoning y reintentos.
+    planner_error: dict | None = None
+    reasoning: str | None = None
+    retries: int = 0
+
+
+ASK_AMBIGUOUS = (
+    "Tu pedido es ambiguo. Dime qué quieres (analizar, revisar un diff, depurar un fallo, "
+    "implementar un cambio o un reporte) y sobre qué código (ruta, archivo, función o repo)."
+)
+ASK_NO_PLAN = (
+    "No identifiqué una tarea en tu pedido. Dime qué quieres (analizar, revisar un diff, "
+    "depurar un fallo, implementar un cambio o un reporte) y sobre qué código."
+)
 
 
 def _normalize(text: str) -> str:
@@ -150,20 +164,73 @@ def _keyword_hit(request: str) -> str | None:
 
 
 def is_ambiguous(request: str, repos: dict | None = None) -> bool:
-    """Sin verbo, pregunta, código, fallo, diff ni reporte: ≤2 palabras o arranque de seguimiento."""
+    """Ambiguo si: verbo de escritura o fallo SIN código citado ("arregla el bug"); o sin
+    verbo, pregunta, código, fallo, diff ni reporte y ≤2 palabras o arranque de seguimiento."""
     low = _normalize(request)
     if not low:
+        return True
+    code = has_code_reference(request, repos)
+    if (has_write_verb(request) or has_failure(request)) and not code:
         return True
     if (
         _keyword_hit(request)
         or re.search(_QUERY_WORDS, low)
-        or has_code_reference(request, repos)
-        or has_failure(request)
+        or code
         or has_diff_reference(request)
         or asks_report(request)
     ):
         return False
     return len(low.split()) <= 2 or re.match(_FOLLOWUP_START, low) is not None
+
+
+# -- Capa (a): ¿hay algo que revisar antes de lanzar pr_review? -------------------------
+_FILE_EXT = r"\.(?:go|py|ts|js|java|rs|rb|yml|yaml|json|toml|md|sql|proto|sh)\b"
+_REF_WORD = r"\b(?:rama|branch|commit|tag|pr|pull request|merge request)\s+#?([\w./-]{2,})"
+_HEX_REF = r"\b[0-9a-f]{7,40}\b"
+_BRANCH_LIKE = r"\b[\w.-]+/[\w./-]+"
+
+
+def cited_ref(request: str) -> str | None:
+    """Rama, commit o PR citados en el pedido: eso es lo que pr_review debe revisar."""
+    m = re.search(_REF_WORD, request, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(_HEX_REF, request.lower())
+    if m:
+        return m.group(0)
+    for m in re.finditer(_BRANCH_LIKE, request):
+        if not re.search(_FILE_EXT, m.group(0)):
+            return m.group(0)
+    return None
+
+
+def _target_repo(request: str, repos: dict | None) -> tuple[str, str] | None:
+    """(alias, ruta) del repo citado, o el único configurado; None si no se sabe."""
+    configured = [(a, p) for a, p in (repos or {}).items() if p]
+    low = _normalize(request)
+    hits = [(a, p) for a, p in configured if re.search(rf"\b{re.escape(_normalize(a))}\b", low)]
+    if len(hits) == 1:
+        return hits[0]
+    if not hits and len(configured) == 1:
+        return configured[0]
+    return None
+
+
+def no_changes_reply(request: str, repos: dict | None) -> str | None:
+    """Sin rama/commit citados y con el repo limpio (solo lectura: status/diff), no hay
+    nada que revisar: respuesta a costo 0 en vez de lanzar pr_review."""
+    if cited_ref(request):
+        return None
+    target = _target_repo(request, repos)
+    if target is None:
+        return None
+    alias, path = target
+    if git_tools.has_pending_changes(path) is not False:
+        return None
+    return (
+        f"No hay cambios que revisar en {alias}: árbol limpio y sin diff contra HEAD. "
+        "Cita una rama o commit si quieres revisar algo ya integrado."
+    )
 
 
 # -- Capa 1: respuestas deterministas ------------------------------------------
@@ -226,20 +293,31 @@ def local_decision(
     if reply:
         return RouteDecision("meta", f"meta sobre {APP_NAME}", reply=reply, confidence="alta")
     if is_ambiguous(request, repos):
-        previous = next((t["agents"] for t in reversed(session_turns) if t.get("agents")), None)
-        if previous:
-            return RouteDecision("inherit", "hereda turno previo", agents=[previous[-1]])
-        return RouteDecision(
-            "ambiguous",
-            "ambiguo: precisa el pedido",
-            reply=(
-                "Tu pedido es ambiguo. Dime qué quieres (analizar, revisar un diff, depurar un "
-                "fallo, implementar un cambio o un reporte) y sobre qué código (ruta, archivo, "
-                "función o repo)."
-            ),
-            confidence="baja",
+        return _fallback_decision(
+            session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS
         )
     return None
+
+
+def _fallback_decision(
+    session_turns: list[dict],
+    router: str,
+    reason: str,
+    ask_text: str,
+    inherit_notices: list[str] | None = None,
+    **extra,
+) -> RouteDecision:
+    """Capa 4: con turnos previos hereda su agente; sin ellos, una línea pidiendo precisar."""
+    previous = next((t["agents"] for t in reversed(session_turns) if t.get("agents")), None)
+    if previous:
+        return RouteDecision(
+            "inherit",
+            "hereda turno previo",
+            agents=[previous[-1]],
+            notices=list(inherit_notices or []),
+            **extra,
+        )
+    return RouteDecision(router, reason, reply=ask_text, confidence="baja", **extra)
 
 
 # -- Capa 3: reglas duras ------------------------------------------------------------
@@ -287,29 +365,74 @@ def plan_decision(
     session_turns: list[dict],
     repos: dict | None = None,
 ) -> RouteDecision:
-    steps, router, llm_failed = plan_with_router(request, use_llm=use_llm, context=context)
+    result = plan_with_router(request, use_llm=use_llm, context=context)
+    extra = {
+        "planner_error": result.planner_error,
+        "reasoning": result.reasoning,
+        "retries": result.retries,
+    }
+    if result.router == "no_plan":
+        # El LLM respondió sin pasos: pedido no enrutable. Nunca keywords.
+        return _fallback_decision(
+            session_turns,
+            "no_plan",
+            "planner: sin plan",
+            ASK_NO_PLAN,
+            inherit_notices=["planner: sin plan"],
+            **extra,
+        )
+    steps = result.steps
     keyword_agent = _keyword_hit(request)
     first = steps[0]["agent"] if steps else None
-    if router == "llm":
+    if result.router == "llm":
         confidence = "alta" if keyword_agent and first == keyword_agent else "media"
     else:
-        confidence = "baja" if llm_failed else "media"
+        confidence = "baja" if result.planner_error else "media"
     steps, notices = apply_hard_rules(steps, request, bool(session_turns), repos)
     if notices:
         confidence = "baja"
-    if llm_failed:
-        notices.insert(0, "planner LLM falló, keywords")
+    if result.planner_error:
+        notices.insert(0, f"planner LLM: {result.planner_error['kind']}, keywords")
     agents = [s["agent"] for s in steps]
+    if agents == ["pr_review_agent"]:
+        reply = no_changes_reply(request, repos)
+        if reply:
+            return RouteDecision(
+                "no_changes",
+                "sin cambios que revisar",
+                reply=reply,
+                confidence="alta",
+                notices=notices,
+                **extra,
+            )
     reason = REASONS.get(agents[0], "plan") if len(agents) == 1 else f"plan de {len(agents)} pasos"
-    return RouteDecision(router, reason, agents, steps, None, confidence, llm_failed, notices)
+    return RouteDecision(
+        result.router,
+        reason,
+        agents=agents,
+        steps=steps,
+        confidence=confidence,
+        notices=notices,
+        **extra,
+    )
 
 
 def describe(decision: RouteDecision) -> str:
-    """Una línea para el dev: `→ architecture (consulta de código) · aviso`."""
+    """Una línea para el dev: `→ architecture (consulta de código) · aviso`.
+
+    Con DEBUG añade el error del planner (clase y mensaje) y su reasoning.
+    """
     head = " → ".join(_short(a) for a in decision.agents) or "sin agente"
     line = f"→ {head} ({decision.reason})"
     if decision.notices:
         line += " · " + " · ".join(decision.notices)
+    if getattr(config, "DEBUG", False):
+        if decision.planner_error:
+            err = decision.planner_error
+            detail = " ".join(x for x in (err.get("kind"), err.get("class")) if x)
+            line += f" · planner_error: {detail}: {err.get('message', '')}"
+        if decision.reasoning:
+            line += f" · reasoning: {decision.reasoning[:120]}"
     return line
 
 

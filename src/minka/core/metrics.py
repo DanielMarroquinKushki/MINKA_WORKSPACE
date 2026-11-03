@@ -57,6 +57,9 @@ def build_run_record(
     usage: dict,
     reason: str | None = None,
     confidence: str | None = None,
+    planner_error: dict | None = None,
+    reasoning: str | None = None,
+    planner_retries: int = 0,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -64,6 +67,7 @@ def build_run_record(
     for u in usage.get("per_agent", []):
         entry = {"agent": u.get("agent"), "model": u.get("model")}
         entry.update({k: u.get(k) or 0 for k in TOKEN_KEYS})
+        entry["repeated_tool_calls"] = u.get("repeated_tool_calls") or 0
         per_agent.append(entry)
         c = cost_usd(u)
         if c is None:
@@ -81,6 +85,10 @@ def build_run_record(
         "router": router,
         "reason": reason,
         "confidence": confidence,
+        "planner_error": planner_error,
+        "reasoning": reasoning,
+        "planner_retries": planner_retries,
+        "repeated_tool_calls": sum(e["repeated_tool_calls"] for e in per_agent),
         "plan": list(plan),
         "fix_loop_iters": fix_loop_iters,
         "ok": ok,
@@ -149,9 +157,10 @@ def aggregate(records: list[dict], project: str | None = None, agent: str | None
     costs: dict[str, list[float]] = {}
     totals = dict.fromkeys(TOKEN_KEYS, 0)
     cost = base = duration = 0.0
-    ok = fix_runs = fix_iters = 0
+    ok = fix_runs = fix_iters = repeated = 0
     routers: Counter = Counter()
     for r in records:
+        repeated += r.get("repeated_tool_calls") or 0
         for u in r.get("per_agent", []):
             name = _short(u.get("agent"))
             if agent and name != agent:
@@ -192,6 +201,7 @@ def aggregate(records: list[dict], project: str | None = None, agent: str | None
         "routers": dict(routers),
         "fix_loop_runs": fix_runs,
         "fix_loop_iters": fix_iters,
+        "repeated_tool_calls": repeated,
     }
 
 
