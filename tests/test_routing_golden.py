@@ -95,7 +95,7 @@ def test_casos_cubren_los_12_tipos_y_son_genericos():
         "stack_trace", "implementar", "reporte", "ambiguo_sin_historial", "meta", "seguimiento_hereda",
     ):
         assert tipo in ids
-    assert len(CASES) >= 44
+    assert len(CASES) >= 50
     raw = json.dumps(CASES).lower()
     assert not any(w in raw for w in ("kushki", "credibanco", "amex", "usrv"))
 
@@ -139,7 +139,7 @@ def test_pr_review_sin_cambios_responde_sin_agente_ni_planner(harness, monkeypat
         out = harness.orch.run(pedido)
         assert harness.ran == [] and harness.orch.last_router == "no_changes"
         assert harness.llm_calls == 0  # antes del planner: $0
-        assert "No hay cambios que revisar en pagos" in out
+        assert "No hay cambios en pagos" in out
         assert "→ sin agente (sin cambios que revisar)" in harness.lines[-1]
 
 
@@ -156,11 +156,11 @@ def test_pr_review_con_rama_citada_revisa_lo_citado(harness, monkeypatch):
     assert harness.ran == ["pr_review_agent"] and consultas == []
 
 
-def test_pr_review_con_cambios_pendientes_lanza_el_agente(harness, monkeypatch):
+def test_pr_review_con_cambios_pendientes_lanza_el_agente_sin_planner(harness, monkeypatch):
     monkeypatch.setattr(router_mod.git_tools, "has_pending_changes", lambda path: True)
-    harness.llm_plan = ["pr_review_agent"]
     harness.orch.run("revisa el diff del repo pagos")
-    assert harness.ran == ["pr_review_agent"]
+    assert harness.ran == ["pr_review_agent"] and harness.llm_calls == 0
+    assert harness.orch.last_router == "review_direct"
 
 
 def test_debug_muestra_planner_error_y_reasoning(harness, monkeypatch):

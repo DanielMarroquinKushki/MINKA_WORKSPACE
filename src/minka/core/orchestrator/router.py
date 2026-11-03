@@ -110,6 +110,8 @@ class RouteDecision:
     planner_error: dict | None = None
     reasoning: str | None = None
     retries: int = 0
+    # Texto que el orquestador añade a la tarea del agente (p.ej. qué repos revisar).
+    task_suffix: str | None = None
 
 
 ASK_AMBIGUOUS = (
@@ -243,33 +245,60 @@ def cited_ref(request: str) -> str | None:
     return None
 
 
-def _target_repo(request: str, repos: dict | None) -> tuple[str, str] | None:
-    """(alias, ruta) del repo citado, o el único configurado; None si no se sabe."""
+def _target_repos(request: str, repos: dict | None) -> list[tuple[str, str]]:
+    """(alias, ruta) de los repos citados en el pedido; si no cita ninguno, todos los configurados."""
     configured = [(a, p) for a, p in (repos or {}).items() if p]
     low = _normalize(request)
     hits = [(a, p) for a, p in configured if re.search(rf"\b{re.escape(_normalize(a))}\b", low)]
-    if len(hits) == 1:
-        return hits[0]
-    if not hits and len(configured) == 1:
-        return configured[0]
+    return hits or configured
+
+
+def review_decision(request: str, repos: dict | None) -> RouteDecision | None:
+    """Pedido de revisión (diff/PR/revisar) sin rama ni commit citados: mira git (solo
+    lectura) en los repos citados o en todos. Todos limpios → respuesta a $0; algunos con
+    cambios → pr_review limitado a esos; si algún repo no se pudo comprobar → None (planner)."""
+    if cited_ref(request):
+        return None
+    targets = _target_repos(request, repos)
+    if not targets:
+        return None
+    status = {alias: git_tools.has_pending_changes(path) for alias, path in targets}
+    dirty = [alias for alias, pending in status.items() if pending is True]
+    if dirty:
+        clean = [alias for alias, pending in status.items() if pending is False]
+        suffix = f"Repos con cambios pendientes: {', '.join(dirty)}."
+        if clean:
+            suffix += f" Los repos {', '.join(clean)} están limpios: no ejecutes show_diff sobre ellos."
+        return RouteDecision(
+            "review_direct",
+            f"cambios pendientes en {', '.join(dirty)}, directo",
+            agents=["pr_review_agent"],
+            confidence="alta",
+            task_suffix=suffix,
+        )
+    if all(pending is False for pending in status.values()):
+        return RouteDecision(
+            "no_changes",
+            "sin cambios que revisar",
+            reply=(
+                f"No hay cambios en {', '.join(status)}: árbol limpio y sin diff contra HEAD. "
+                "Cita una rama o commit si quieres revisar algo ya integrado."
+            ),
+            confidence="alta",
+        )
     return None
 
 
-def no_changes_reply(request: str, repos: dict | None) -> str | None:
-    """Sin rama/commit citados y con el repo limpio (solo lectura: status/diff), no hay
-    nada que revisar: respuesta a costo 0 en vez de lanzar pr_review."""
-    if cited_ref(request):
-        return None
-    target = _target_repo(request, repos)
-    if target is None:
-        return None
-    alias, path = target
-    if git_tools.has_pending_changes(path) is not False:
-        return None
-    return (
-        f"No hay cambios que revisar en {alias}: árbol limpio y sin diff contra HEAD. "
-        "Cita una rama o commit si quieres revisar algo ya integrado."
-    )
+# Agentes cuyo turno nunca se hereda: una revisión o un cambio no es "contexto" para la
+# siguiente pregunta ambigua.
+_NO_INHERIT = ("pr_review_agent", "development_agent")
+_NOT_USEFUL_PREFIXES = ("⚠️", "❌", "Máximo de iteraciones", "Agente desconocido", "Modo solo lectura")
+
+
+def is_useful_result(text: str) -> bool:
+    """Resultado de agente que sirve como contexto: no es negativa, error ni aviso."""
+    head = (text or "").strip()
+    return bool(head) and not head.startswith(_NOT_USEFUL_PREFIXES)
 
 
 # -- Capa 1: respuestas deterministas ------------------------------------------
@@ -331,13 +360,12 @@ def local_decision(
     reply = meta_reply(request, agent_names)
     if reply:
         return RouteDecision("meta", f"meta sobre {APP_NAME}", reply=reply, confidence="alta")
-    # (b) "revisa este diff" sin rama/commit citados y con el repo limpio: $0, sin planner.
+    # (b) revisión sin rama/commit citados: git decide antes del planner ($0 si todo limpio,
+    # pr_review limitado a los repos con cambios si los hay).
     if has_diff_reference(request):
-        reply = no_changes_reply(request, repos)
-        if reply:
-            return RouteDecision(
-                "no_changes", "sin cambios que revisar", reply=reply, confidence="alta"
-            )
+        decision = review_decision(request, repos)
+        if decision is not None:
+            return decision
     if is_ambiguous(request, repos):
         return _fallback_decision(
             session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS
@@ -361,13 +389,16 @@ def _fallback_decision(
     inherit_notices: list[str] | None = None,
     **extra,
 ) -> RouteDecision:
-    """Capa 4: con turnos previos hereda su agente; sin ellos, una línea pidiendo precisar."""
-    previous = next((t["agents"] for t in reversed(session_turns) if t.get("agents")), None)
-    if previous:
+    """Capa 4: hereda el agente del turno inmediatamente anterior solo si ese turno terminó
+    con un resultado útil (no negativa, no "sin cambios", no pregunta de aclaración) y su
+    agente no fue pr_review ni development; si no, una línea pidiendo precisar ($0)."""
+    last = session_turns[-1] if session_turns else None
+    agents = (last or {}).get("agents") or []
+    if last and last.get("useful", True) and agents and agents[-1] not in _NO_INHERIT:
         return RouteDecision(
             "inherit",
             "hereda turno previo",
-            agents=[previous[-1]],
+            agents=[agents[-1]],
             notices=list(inherit_notices or []),
             **extra,
         )
@@ -449,7 +480,8 @@ def plan_decision(
         confidence = "alta" if keyword_agent and first == keyword_agent else "media"
     else:
         confidence = "baja" if result.planner_error else "media"
-    steps, notices = apply_hard_rules(steps, request, bool(session_turns), repos)
+    has_prev_result = any(t.get("useful", True) and t.get("agents") for t in session_turns)
+    steps, notices = apply_hard_rules(steps, request, has_prev_result, repos)
     if notices:
         confidence = "baja"
     if result.planner_error:

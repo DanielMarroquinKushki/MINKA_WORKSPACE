@@ -402,15 +402,17 @@
         }
       ],
       "expect": {
-        "agents": [
-          "development_agent"
-        ],
-        "router": "inherit",
+        "agents": [],
+        "router": "ambiguous",
         "llm_called": false,
+        "reply_contains": [
+          "ambiguo"
+        ],
         "line_contains": [
-          "→ development (hereda turno previo)"
+          "→ sin agente (ambiguo: precisa el pedido)"
         ]
-      }
+      },
+      "_nota": "development nunca se hereda"
     },
     {
       "id": "gracias_por_todo_sin_plan",
@@ -787,6 +789,43 @@
         ],
         "router": "llm",
         "llm_called": true
+      }
+    },
+    {
+      "id": "seguimiento_tras_sin_cambios_pide_precisar",
+      "request": "¿y eso?",
+      "turns": [
+        {
+          "request": "revisa este diff",
+          "agents": [],
+          "useful": false
+        }
+      ],
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "reply_contains": [
+          "ambiguo"
+        ]
+      }
+    },
+    {
+      "id": "seguimiento_tras_pr_review_pide_precisar",
+      "request": "¿y en el otro repo?",
+      "turns": [
+        {
+          "request": "revisa el diff de la rama feature/login",
+          "agents": [
+            "pr_review_agent"
+          ],
+          "useful": true
+        }
+      ],
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false
       }
     }
   ]

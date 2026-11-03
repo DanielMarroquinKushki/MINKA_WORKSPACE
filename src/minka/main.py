@@ -584,9 +584,14 @@ def stats(
     month: str = typer.Option(None, "--month", help="Mes local YYYY-MM (agrega sus días)."),
     project: str = typer.Option(None, "--project", help="Solo corridas de este proyecto."),
     agent: str = typer.Option(None, "--agent", help="Solo este agente (p.ej. development)."),
+    source: str = typer.Option(
+        None, "--source", help=f"Solo corridas con este origen (repl|cli|bridge o la etiqueta {SOURCE_ENV})."
+    ),
 ):
     label = f"mes {month}" if month else f"día {day or metrics.local_day()}"
-    agg = metrics.aggregate(metrics.read_run_records(day=day, month=month), project, agent)
+    if source:
+        label += f" · source {source}"
+    agg = metrics.aggregate(metrics.read_run_records(day=day, month=month), project, agent, source)
     if not agg["runs"]:
         console.print(f"Sin corridas registradas para {label}.")
         return

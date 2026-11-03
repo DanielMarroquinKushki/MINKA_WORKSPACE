@@ -77,6 +77,10 @@ class Orchestrator:
         """Olvida los turnos de la sesión (REPL /clear)."""
         self.session_turns.clear()
 
+    def _record_turn(self, request: str, agents: list[str], useful: bool) -> None:
+        """Todo turno cuenta (también los de $0): la herencia mira el inmediatamente anterior."""
+        self.session_turns.append({"request": request[:120], "agents": agents, "useful": useful})
+
     def _get_agent(self, name: str):
         """Lazy-init de agentes: solo se crean cuando se usan (evita crear el
         cliente Anthropic al importar / en --help)."""
@@ -189,7 +193,7 @@ class Orchestrator:
         result = agent.run(task)
         self.state.record_step(name, task, result)
         self._record_usage(agent)
-        self.session_turns.append({"request": request[:120], "agents": [name]})
+        self._record_turn(request, [name], useful=router.is_useful_result(result))
         return result
 
     def run(
@@ -279,6 +283,7 @@ class Orchestrator:
             decision = router.local_decision(request, self.session_turns, AGENT_NAMES, repos)
             if decision is not None and decision.reply is not None:
                 self._apply_decision(decision)
+                self._record_turn(request, [], useful=False)
                 return decision.reply
 
         # Antes de una tarea: sesión AWS utilizable (solo Bedrock). Login solo si
@@ -311,18 +316,21 @@ class Orchestrator:
                     request, context, use_llm_planner, self.session_turns, repos
                 )
             self._apply_decision(decision)
-            if decision.reply is not None:  # planner sin plan / sin cambios que revisar
+            if decision.reply is not None:  # planner sin plan: pide precisar
+                self._record_turn(request, [], useful=False)
                 return decision.reply
             if self.read_only and any(a not in router.READONLY_AGENTS for a in decision.agents):
                 self.last_run_ok = False
                 self.last_exit_code = 2
+                self._record_turn(request, [], useful=False)
                 return router.read_only_message(decision.agents)
-            # Solo el plan del LLM trae tareas propias; keyword/herencia reciben la
-            # tarea completa (con historial), como siempre.
+            # Solo el plan del LLM trae tareas propias; keyword/herencia/directo reciben la
+            # tarea completa (con historial) más el sufijo del router, si lo hay.
             if decision.router == "llm":
                 plan = decision.steps
             else:
-                plan = [{"agent": a, "task": task} for a in decision.agents]
+                suffix = f"\n\n{decision.task_suffix}" if decision.task_suffix else ""
+                plan = [{"agent": a, "task": f"{task}{suffix}"} for a in decision.agents]
             results = []
             done = 0
             fix_loop_ran = False
@@ -381,7 +389,7 @@ class Orchestrator:
             self._save_state(task, plan, results, i + 1, fix_loop_ran)
 
         self._clear_state()
-        self.session_turns.append({"request": request[:120], "agents": list(self.last_plan)})
+        self._record_turn(request, list(self.last_plan), useful=router.is_useful_result(result))
 
         if getattr(config, "META_AGENT_ENABLED", False) and len(self.state.steps) >= 5:
             console.print(

@@ -129,7 +129,7 @@ def test_stats_con_datos_y_filtros(cli, tmp_path):
     runs_dir.mkdir(parents=True)
     records = [
         _record("r1", "demo", [USAGE_OPUS, USAGE_HAIKU]),
-        _record("r2", "otro", [USAGE_OPUS], router="keyword", fix_loop_iters=3, ok=False),
+        _record("r2", "otro", [USAGE_OPUS], router="keyword", fix_loop_iters=3, ok=False, source="cache_after"),
     ]
     (runs_dir / "2026-01-05.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n")
 
@@ -143,5 +143,8 @@ def test_stats_con_datos_y_filtros(cli, tmp_path):
     agent = _invoke(["stats", "--day", "2026-01-05", "--agent", "report"]).output
     assert "report" in agent and "architecture" not in agent
     assert "corridas 2" in _invoke(["stats", "--month", "2026-01"]).output
+    por_source = _invoke(["stats", "--day", "2026-01-05", "--source", "cache_after"]).output
+    assert "corridas 1" in por_source and "source cache_after" in por_source
+    assert "Sin corridas" in _invoke(["stats", "--day", "2026-01-05", "--source", "nadie"]).output
     assert "Sin corridas registradas para día 2026-01-06" in _invoke(["stats", "--day", "2026-01-06"]).output
     assert cli.runs == []

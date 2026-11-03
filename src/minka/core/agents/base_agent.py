@@ -145,6 +145,8 @@ class BaseAgent(ABC):
             "cache_creation_1h": 0,
             # Llamadas idénticas a una tool bloqueadas por TOOL_REPEAT_LIMIT.
             "repeated_tool_calls": 0,
+            # Una entrada por respuesta del modelo: cómo evoluciona el caché vuelta a vuelta.
+            "per_iteration": [],
         }
 
     def _accumulate_usage(self, response) -> None:
@@ -160,13 +162,16 @@ class BaseAgent(ABC):
                 return
             self.last_usage["requests"] += 1
             self.last_usage["model"] = getattr(response, "model", None) or self.last_usage["model"]
+            step = {}
             for key in (
                 "input_tokens",
                 "output_tokens",
                 "cache_creation_input_tokens",
                 "cache_read_input_tokens",
             ):
-                self.last_usage[key] += getattr(usage, key, 0) or 0
+                step[key] = getattr(usage, key, 0) or 0
+                self.last_usage[key] += step[key]
+            self.last_usage.setdefault("per_iteration", []).append(step)
             # usage.cache_creation desglosa el write por TTL. Puede no venir
             # (backend viejo / sin caching): por eso getattr encadenado.
             breakdown = getattr(usage, "cache_creation", None)
@@ -197,10 +202,14 @@ class BaseAgent(ABC):
             self._progress = prog
             recalled = self._recall_memories(task)
             user_content = f"{recalled}\n\n{task}" if recalled else task
-            messages = self.memory.get_context() + [{"role": "user", "content": user_content}]
+            # Copias: el marcador móvil de caché se pone sobre estos dicts, nunca sobre
+            # los que guarda SessionMemory.
+            messages = [dict(m) for m in self.memory.get_context()]
+            messages.append({"role": "user", "content": user_content})
             self.iteration_count = 0
             self.last_usage = self._empty_usage()
             self._tool_calls_seen = Counter()
+            self._cached_block = None
 
             # Se construye UNA vez, fuera del loop: el prefijo cacheado debe ser
             # byte-idéntico en cada iteración o el cache no acierta.
@@ -209,6 +218,7 @@ class BaseAgent(ABC):
             while self.iteration_count < self.max_iterations:
                 self.iteration_count += 1
                 prog.update(iteration=self.iteration_count, status="esperando al modelo")
+                self._mark_cache_tail(messages)
 
                 response = self.client.messages.create(
                     model=self._model(),
@@ -289,6 +299,34 @@ class BaseAgent(ABC):
         if ttl != "5m":
             cache_control["ttl"] = ttl
         return [{"type": "text", "text": text, "cache_control": cache_control}]
+
+    def _mark_cache_tail(self, messages: list[dict]) -> None:
+        """Marcador móvil: cache_control (TTL 5m) en el último bloque del último mensaje
+        `user`, quitando el de la vuelta anterior. Así cada vuelta lee del caché todo el
+        historial previo y solo escribe el delta (tool_use + tool_result nuevos).
+
+        Siempre 5m aunque el system vaya a 1h: las vueltas van segundos aparte y la API
+        exige que las entradas de 1h precedan a las de 5m (system → mensajes cumple).
+        Nunca se marcan bloques `assistant` (objetos del SDK). Con PROMPT_CACHE_ENABLED=False
+        no marca nada. No cambia el texto que ve el modelo.
+        """
+        previous = getattr(self, "_cached_block", None)
+        if isinstance(previous, dict):
+            previous.pop("cache_control", None)
+        self._cached_block = None
+        if not getattr(self.config, "PROMPT_CACHE_ENABLED", True) or not messages:
+            return
+        last = messages[-1]
+        if last.get("role") != "user":
+            return
+        content = last.get("content")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+            last["content"] = content
+        if not isinstance(content, list) or not content or not isinstance(content[-1], dict):
+            return
+        content[-1]["cache_control"] = {"type": "ephemeral"}
+        self._cached_block = content[-1]
 
     def _cache_ttl(self) -> str:
         """TTL del cache para este agente (CACHE_TTL_BY_AGENT → CACHE_TTL_DEFAULT).

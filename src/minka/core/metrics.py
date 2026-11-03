@@ -144,10 +144,18 @@ def _short(agent: str | None) -> str:
     return (agent or "?").removesuffix("_agent")
 
 
-def aggregate(records: list[dict], project: str | None = None, agent: str | None = None) -> dict:
-    """Totales y desglose por agente. Con `agent`, los totales son solo de ese agente."""
+def aggregate(
+    records: list[dict],
+    project: str | None = None,
+    agent: str | None = None,
+    source: str | None = None,
+) -> dict:
+    """Totales y desglose por agente. Con `agent`, los totales son solo de ese agente;
+    `source` filtra por quién lanzó la corrida (repl|cli|bridge|<etiqueta MINKA_SOURCE>)."""
     if project:
         records = [r for r in records if r.get("project") == project]
+    if source:
+        records = [r for r in records if r.get("source") == source]
     if agent:
         agent = _short(agent)
         records = [
