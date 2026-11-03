@@ -16,8 +16,12 @@ def test_plan_rejects_unknown_agent():
         Plan.model_validate({"steps": [{"agent": "inventado", "task": "x"}]})
 
 
-def test_plan_defaults_empty_steps():
-    assert Plan().steps == []
+def test_plan_requires_at_least_one_step():
+    # steps=[] ya no valida (minItems=1): el planner cae a la red de seguridad del router.
+    with pytest.raises(ValidationError):
+        Plan.model_validate({"steps": []})
+    with pytest.raises(ValidationError):
+        Plan()
 
 
 def test_review_decision_valid_with_blockers():

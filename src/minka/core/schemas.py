@@ -32,9 +32,11 @@ class PlanStep(BaseModel):
 class Plan(BaseModel):
     """Plan de ejecución: lista ordenada de pasos."""
 
+    # minItems=1 es lo que corta el steps=[]: con la pista sola el planner devolvía vacío en
+    # 86% de las preguntas de información; con min_length=1, 0% (36 llamadas, 2026-11-03).
+    # Si el modelo igual manda [] falla la validación y el router aplica su red de seguridad.
     steps: list[PlanStep] = Field(
-        default_factory=list,
-        # "Vacío si no aplica." inducía steps=[] en 2 de 3 llamadas (medido 2026-11-03).
+        min_length=1,
         description="Al menos un paso; si no es una tarea concreta, architecture_agent.",
     )
     # Opcional: el prompt lo pide ("reasoning") y antes se perdía. Solo métricas y --debug.

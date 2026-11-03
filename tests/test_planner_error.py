@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from minka.core import structured
 from minka.core.orchestrator import planner
@@ -117,8 +117,9 @@ def test_plan_with_router_error_cae_a_keywords_con_el_error(monkeypatch):
 def test_schema_plan_acepta_reasoning_opcional():
     from minka.core.schemas import Plan
 
-    assert Plan.model_validate({"steps": []}).reasoning is None
-    plan = Plan.model_validate({"steps": [], "reasoning": "nada que hacer"})
+    paso = {"agent": "architecture_agent", "task": "t"}
+    assert Plan.model_validate({"steps": [paso]}).reasoning is None
+    plan = Plan.model_validate({"steps": [paso], "reasoning": "nada que hacer"})
     assert plan.reasoning == "nada que hacer"
     assert "reasoning" in Plan.model_json_schema()["properties"]
 
@@ -163,5 +164,10 @@ def test_schema_plan_pistas_nuevas():
 
     props = Plan.model_json_schema()["properties"]
     assert props["steps"]["description"] == "Al menos un paso; si no es una tarea concreta, architecture_agent."
+    assert props["steps"]["minItems"] == 1  # steps=[] ya no valida: cae a la red de seguridad
     assert "máximo 6 palabras" in props["reasoning"]["description"]
-    assert Plan.model_validate({"steps": []}).reasoning is None  # sigue opcional
+    assert "reasoning" not in Plan.model_json_schema().get("required", [])  # sigue opcional
+    paso = {"agent": "architecture_agent", "task": "t"}
+    assert Plan.model_validate({"steps": [paso]}).reasoning is None
+    with pytest.raises(ValidationError):
+        Plan.model_validate({"steps": []})
