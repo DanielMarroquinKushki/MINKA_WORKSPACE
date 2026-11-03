@@ -34,11 +34,12 @@ class Plan(BaseModel):
 
     steps: list[PlanStep] = Field(
         default_factory=list,
-        description="Pasos en orden de ejecución. Vacío si no aplica.",
+        # "Vacío si no aplica." inducía steps=[] en 2 de 3 llamadas (medido 2026-11-03).
+        description="Al menos un paso; si no es una tarea concreta, architecture_agent.",
     )
     # Opcional: el prompt lo pide ("reasoning") y antes se perdía. Solo métricas y --debug.
     reasoning: str | None = Field(
-        default=None, description="Por qué se eligieron estos agentes (breve)."
+        default=None, description="Por qué se eligieron estos agentes; explica en máximo 6 palabras."
     )
 
 

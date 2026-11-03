@@ -95,7 +95,7 @@ def test_casos_cubren_los_12_tipos_y_son_genericos():
         "stack_trace", "implementar", "reporte", "ambiguo_sin_historial", "meta", "seguimiento_hereda",
     ):
         assert tipo in ids
-    assert len(CASES) >= 28
+    assert len(CASES) >= 44
     raw = json.dumps(CASES).lower()
     assert not any(w in raw for w in ("kushki", "credibanco", "amex", "usrv"))
 
@@ -132,13 +132,15 @@ def test_sesion_registra_turnos_y_clear_los_borra(harness):
     assert harness.orch.session_turns == []
 
 
-def test_pr_review_sin_cambios_responde_sin_agente(harness, monkeypatch):
+def test_pr_review_sin_cambios_responde_sin_agente_ni_planner(harness, monkeypatch):
     monkeypatch.setattr(router_mod.git_tools, "has_pending_changes", lambda path: False)
     harness.llm_plan = ["pr_review_agent"]
-    out = harness.orch.run("revisa el diff del repo pagos")
-    assert harness.ran == [] and harness.orch.last_router == "no_changes"
-    assert "No hay cambios que revisar en pagos" in out
-    assert "→ sin agente (sin cambios que revisar)" in harness.lines[0]
+    for pedido in ("revisa el diff del repo pagos", "revisa este diff"):
+        out = harness.orch.run(pedido)
+        assert harness.ran == [] and harness.orch.last_router == "no_changes"
+        assert harness.llm_calls == 0  # antes del planner: $0
+        assert "No hay cambios que revisar en pagos" in out
+        assert "→ sin agente (sin cambios que revisar)" in harness.lines[-1]
 
 
 def test_pr_review_con_rama_citada_revisa_lo_citado(harness, monkeypatch):
@@ -182,3 +184,18 @@ def test_reasoning_llega_a_metrics_y_a_debug(harness, monkeypatch):
     harness.orch.run("¿dónde se resuelve el cálculo de comisiones?")
     assert harness.orch.last_run_record["reasoning"] == "consulta de arquitectura"
     assert "reasoning: consulta de arquitectura" in harness.lines[0]
+
+
+def test_validation_del_planner_cae_a_la_red_de_seguridad(harness, monkeypatch):
+    invalid = planner.LLMPlan(None, StructuredError("validation", "ValidationError", "agente inventado"), None, 1)
+    monkeypatch.setattr(planner, "_llm_plan", lambda task, context="": invalid)
+    harness.orch.run("¿dónde se resuelve el token?")  # pregunta de información → architecture
+    assert harness.ran == ["architecture_agent"] and harness.orch.last_router == "no_plan"
+    assert "planner: respuesta inválida → architecture" in harness.lines[-1]
+    assert harness.orch.last_run_record["planner_error"]["kind"] == "validation"
+    assert harness.orch.last_run_record["planner_retries"] == 1
+    harness.ran.clear()
+    harness.orch.clear_session()  # sin historial: conversacional → pide precisar
+    out = harness.orch.run("cuéntame un chiste")
+    assert harness.ran == [] and "No identifiqué una tarea" in out
+    assert "→ sin agente (planner: respuesta inválida)" in harness.lines[-1]

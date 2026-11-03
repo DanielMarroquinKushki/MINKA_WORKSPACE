@@ -59,6 +59,12 @@ _QUERY_WORDS = (
     r"analiza|revisa|describe|compara|busca|cuant[oa]s?|quien)\b"
 )
 _FOLLOWUP_START = r"^(y|entonces|ahora|tambien|lo mismo|eso|esto|otra vez|de nuevo|igual|el otro|la otra)\b"
+# Pregunta de información sobre el proyecto: va a architecture aunque el planner no dé plan.
+_INFO_WORDS = (
+    r"\b(donde|como|que (hace|hacen|es|son|significa|pasa|ocurre)|por que|cual(es)?|cuant[oa]s?|"
+    r"quien|lista|explica|muestra|describe|flujo|riesgos?|dependencias|arquitectura)\b"
+)
+_PRONOUNS = {"eso", "esto", "aquello", "ello", "lo", "entonces", "ahora", "ya", "y", "o", "de", "el", "la"}
 _FAILURE = (
     r"(stack ?trace|traceback|panic|\berror\b|excepcion|exception|\bfalla\b|\bfallo\b|"
     r"no funciona|timeout|nil pointer|segfault|goroutine|\b5\d\d\b)"
@@ -163,14 +169,31 @@ def _keyword_hit(request: str) -> str | None:
     return None
 
 
+def is_information_question(request: str) -> bool:
+    """Interrogativa o con dónde/cómo/qué/por qué/lista/explica/muestra… y con algún
+    sustantivo real: "¿qué opinas de eso?" no lo es, "¿dónde se resuelve el token?" sí."""
+    low = _normalize(request)
+    m = re.search(_INFO_WORDS, low)
+    if not m:
+        return False
+    rest = low[: m.start()] + low[m.end() :]
+    content = [w for w in rest.split() if len(w) >= 4 and w not in _PRONOUNS]
+    return bool(content)
+
+
 def is_ambiguous(request: str, repos: dict | None = None) -> bool:
-    """Ambiguo si: verbo de escritura o fallo SIN código citado ("arregla el bug"); o sin
-    verbo, pregunta, código, fallo, diff ni reporte y ≤2 palabras o arranque de seguimiento."""
+    """Ambiguo si: verbo de escritura o fallo SIN código citado ni pregunta de información
+    ("arregla el bug"); o sin verbo, pregunta, código, fallo, diff ni reporte y ≤2 palabras
+    o arranque de seguimiento."""
     low = _normalize(request)
     if not low:
         return True
     code = has_code_reference(request, repos)
-    if (has_write_verb(request) or has_failure(request)) and not code:
+    if (
+        (has_write_verb(request) or has_failure(request))
+        and not code
+        and not is_information_question(request)
+    ):
         return True
     if (
         _keyword_hit(request)
@@ -292,6 +315,13 @@ def local_decision(
     reply = meta_reply(request, agent_names)
     if reply:
         return RouteDecision("meta", f"meta sobre {APP_NAME}", reply=reply, confidence="alta")
+    # (b) "revisa este diff" sin rama/commit citados y con el repo limpio: $0, sin planner.
+    if has_diff_reference(request):
+        reply = no_changes_reply(request, repos)
+        if reply:
+            return RouteDecision(
+                "no_changes", "sin cambios que revisar", reply=reply, confidence="alta"
+            )
     if is_ambiguous(request, repos):
         return _fallback_decision(
             session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS
@@ -372,14 +402,21 @@ def plan_decision(
         "retries": result.retries,
     }
     if result.router == "no_plan":
-        # El LLM respondió sin pasos: pedido no enrutable. Nunca keywords.
+        # El LLM respondió sin pasos o con algo que no valida. Una pregunta de
+        # información va igual a architecture (solo lectura); lo demás es capa 4.
+        # Nunca keywords.
+        kind = (result.planner_error or {}).get("kind")
+        why = "planner: respuesta inválida" if kind == "validation" else "planner: sin plan"
+        if is_information_question(request):
+            return RouteDecision(
+                "no_plan",
+                "pregunta de información",
+                agents=["architecture_agent"],
+                notices=[f"{why} → architecture"],
+                **extra,
+            )
         return _fallback_decision(
-            session_turns,
-            "no_plan",
-            "planner: sin plan",
-            ASK_NO_PLAN,
-            inherit_notices=["planner: sin plan"],
-            **extra,
+            session_turns, "no_plan", why, ASK_NO_PLAN, inherit_notices=[why], **extra
         )
     steps = result.steps
     keyword_agent = _keyword_hit(request)
@@ -394,17 +431,6 @@ def plan_decision(
     if result.planner_error:
         notices.insert(0, f"planner LLM: {result.planner_error['kind']}, keywords")
     agents = [s["agent"] for s in steps]
-    if agents == ["pr_review_agent"]:
-        reply = no_changes_reply(request, repos)
-        if reply:
-            return RouteDecision(
-                "no_changes",
-                "sin cambios que revisar",
-                reply=reply,
-                confidence="alta",
-                notices=notices,
-                **extra,
-            )
     reason = REASONS.get(agents[0], "plan") if len(agents) == 1 else f"plan de {len(agents)} pasos"
     return RouteDecision(
         result.router,

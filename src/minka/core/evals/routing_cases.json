@@ -1,5 +1,5 @@
 {
-  "_doc": "Casos golden del router (genéricos). llm = plan del planner LLM simulado: lista de agentes; [] = respondió sin pasos (empty_plan); null = error del LLM; ausente = no debe llamarse. turns = turnos previos de la sesión. El fixture configura REPOS={'pagos': ...}.",
+  "_doc": "Casos golden del router (genéricos). llm = plan del planner LLM simulado: lista de agentes; [] = respondió sin pasos (empty_plan); null = error del LLM; ausente = no debe llamarse. turns = turnos previos de la sesión. El fixture configura REPOS={'pagos': ...}. eval='info' marca los casos que usa `minka evals routing` (solo planner).",
   "cases": [
     {
       "id": "saludo",
@@ -77,7 +77,8 @@
         "line_contains": [
           "→ architecture (consulta de código)"
         ]
-      }
+      },
+      "eval": "info"
     },
     {
       "id": "donde_se_resuelve",
@@ -94,7 +95,8 @@
         "line_contains": [
           "→ architecture (consulta de código)"
         ]
-      }
+      },
+      "eval": "info"
     },
     {
       "id": "flujo",
@@ -109,7 +111,8 @@
         "router": "llm",
         "llm_called": true,
         "confidence": "media"
-      }
+      },
+      "eval": "info"
     },
     {
       "id": "riesgos",
@@ -124,7 +127,8 @@
         "router": "llm",
         "llm_called": true,
         "confidence": "alta"
-      }
+      },
+      "eval": "info"
     },
     {
       "id": "revisar_diff",
@@ -563,6 +567,162 @@
         "llm_called": false,
         "reply_contains": [
           "analiza el flujo de pagos"
+        ]
+      }
+    },
+    {
+      "id": "info_donde_token",
+      "request": "¿dónde se resuelve el token?",
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "no_plan",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+        ]
+      },
+      "eval": "info"
+    },
+    {
+      "id": "info_como_valida_sesion",
+      "request": "¿cómo se valida la sesión del usuario?",
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "no_plan",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+        ]
+      },
+      "eval": "info"
+    },
+    {
+      "id": "info_que_hace_modulo",
+      "request": "¿qué hace el módulo de notificaciones?",
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "no_plan",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+        ]
+      },
+      "eval": "info"
+    },
+    {
+      "id": "info_por_que_reintenta",
+      "request": "¿por qué el servicio de pagos reintenta tres veces?",
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "no_plan",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+        ]
+      },
+      "eval": "info"
+    },
+    {
+      "id": "info_lista_endpoints",
+      "request": "lista los endpoints públicos del servicio",
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "no_plan",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+        ]
+      },
+      "eval": "info"
+    },
+    {
+      "id": "info_explica_persistencia",
+      "request": "explica cómo se persiste la transacción",
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "no_plan",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+        ]
+      },
+      "eval": "info"
+    },
+    {
+      "id": "info_muestra_timeout",
+      "request": "muestra dónde se configura el timeout",
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "no_plan",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+        ]
+      },
+      "eval": "info"
+    },
+    {
+      "id": "info_cuantos_consumidores",
+      "request": "¿cuántos consumidores tiene la cola de eventos?",
+      "llm": [],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "no_plan",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+        ]
+      },
+      "eval": "info"
+    },
+    {
+      "id": "negativo_y_entonces",
+      "request": "¿y entonces?",
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "reply_contains": [
+          "ambiguo"
+        ]
+      }
+    },
+    {
+      "id": "negativo_que_opinas_de_eso",
+      "request": "¿qué opinas de eso?",
+      "llm": [],
+      "expect": {
+        "agents": [],
+        "router": "no_plan",
+        "llm_called": true,
+        "reply_contains": [
+          "No identifiqué una tarea"
+        ],
+        "line_contains": [
+          "→ sin agente (planner: sin plan)"
         ]
       }
     }

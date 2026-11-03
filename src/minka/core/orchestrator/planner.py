@@ -24,14 +24,15 @@ class LLMPlan:
     error: StructuredError | None = None
     reasoning: str | None = None
     retries: int = 0
+    usage: dict | None = None  # tokens de la(s) llamada(s) al planner
 
 
 @dataclass
 class PlanResult:
     """Lo que el router necesita: pasos, quién decidió y por qué falló el LLM, si falló.
 
-    router: "llm" | "keyword" | "no_plan" (el LLM respondió sin pasos: pedido no
-    enrutable; el router aplica la capa 4, nunca keywords).
+    router: "llm" | "keyword" | "no_plan" (el LLM respondió sin pasos o con una
+    respuesta que no valida: el router aplica la red de seguridad, nunca keywords).
     """
 
     steps: list[dict]
@@ -125,8 +126,13 @@ def _keyword_plan(task: str) -> list[dict]:
 
 
 # El historial de la sesión viaja en un bloque aparte: sirve para resolver
-# seguimientos ("¿y en el otro repo?"), nunca para decidir el agente.
-CONTEXT_LABEL = "Contexto de turnos previos (contexto, no enrutar; solo para resolver seguimientos):"
+# seguimientos ("¿y en el otro repo?"), nunca para decidir el agente. El rótulo
+# no debe sonar a "no hagas nada": con "contexto, no enrutar" el modelo devolvía
+# steps vacíos (medido: 1 llamada real, planner_error=empty_plan).
+CONTEXT_LABEL = (
+    "Turnos previos de la sesión. Referencia solo para resolver seguimientos. "
+    "Enruta SOLO el pedido actual y devuelve siempre al menos un paso."
+)
 
 
 def _planner_messages(task: str, context: str) -> list[dict]:
@@ -160,7 +166,7 @@ def _llm_plan(task: str, context: str = "") -> LLMPlan:
         model = resolve_model_id(
             config.MODELS.get("planner", getattr(config, "DEFAULT_MODEL", config.ANTHROPIC_MODEL))
         )
-        plan, error, retries = call_structured_result(
+        plan, error, retries, usage = call_structured_result(
             client,
             model,
             system=load_system_prompt("orchestrator"),
@@ -169,16 +175,18 @@ def _llm_plan(task: str, context: str = "") -> LLMPlan:
             tool_name="submit_plan",
             tool_description="Devuelve el plan de ejecución: agentes y tareas en orden.",
             retry_transient=True,
+            retry_validation=True,
         )
     except Exception as exc:  # noqa: BLE001 — p.ej. sin backend LLM configurado
         return LLMPlan(None, StructuredError("api", type(exc).__name__, str(exc)[:200]))
     if error is not None:
-        return LLMPlan(None, error, None, retries)
+        return LLMPlan(None, error, None, retries, usage)
     reasoning = getattr(plan, "reasoning", None)
     if not plan.steps:
         empty = StructuredError("empty_plan", "", "el planner no devolvió pasos")
-        return LLMPlan(None, empty, reasoning, retries)
-    return LLMPlan([{"agent": s.agent, "task": s.task} for s in plan.steps], None, reasoning, retries)
+        return LLMPlan(None, empty, reasoning, retries, usage)
+    steps = [{"agent": s.agent, "task": s.task} for s in plan.steps]
+    return LLMPlan(steps, None, reasoning, retries, usage)
 
 
 def plan_with_router(task: str, use_llm: bool = True, context: str = "") -> PlanResult:
@@ -191,7 +199,7 @@ def plan_with_router(task: str, use_llm: bool = True, context: str = "") -> Plan
     if res.steps:
         return PlanResult(res.steps, "llm", None, res.reasoning, res.retries)
     error = res.error or StructuredError("empty_plan", "", "el planner no devolvió pasos")
-    if error.kind == "empty_plan":
+    if error.kind in ("empty_plan", "validation"):
         return PlanResult([], "no_plan", error.as_dict(), res.reasoning, res.retries)
     return PlanResult(_keyword_plan(task), "keyword", error.as_dict(), res.reasoning, res.retries)
 

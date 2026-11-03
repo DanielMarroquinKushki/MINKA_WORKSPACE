@@ -15,6 +15,7 @@ Uso:
     minka --init                       # crea config_local.py y .env en el directorio de datos
     minka --new-project mi-proyecto  # crea el esqueleto de un proyecto nuevo
     minka stats [--day YYYY-MM-DD | --month YYYY-MM] [--project P] [--agent A]
+    minka evals routing --runs 3 [--json-out r.json]  # solo planner; cuesta tokens
     minka "analiza X" --quiet  # sin la línea final de tokens/costo (stderr)
     minka --help
 
@@ -642,6 +643,36 @@ def stats(
         f"{agg['fix_loop_iters']} iteraciones     tools repetidas bloqueadas: "
         f"{agg['repeated_tool_calls']}[/dim]"
     )
+
+
+evals_app = typer.Typer(help="Evaluaciones del motor que llaman al LLM (cuestan tokens).")
+app.add_typer(evals_app, name="evals")
+
+
+@evals_app.command("routing", help="Mide el planner con los casos de información (solo planner, sin agentes).")
+def evals_routing(
+    runs: int = typer.Option(3, "--runs", min=1, max=5, help="Corridas por caso (máx 5)."),
+    json_out: Path = typer.Option(None, "--json-out", help="Escribe el reporte completo en JSON."),
+):
+    from minka.core.evaluator import routing_evals
+
+    _require_llm_backend()
+    if getattr(config, "USE_BEDROCK", False):
+        ok, msg = config.get_aws_session().ensure_sso_login()
+        if not ok:
+            console.print(msg, markup=False)
+            raise typer.Exit(code=1)
+    cases = routing_evals.info_cases()
+    console.print(
+        f"[dim]{len(cases)} casos × {runs} corridas, solo el planner "
+        f"({config.MODELS.get('planner', '?')}); nunca agentes.[/dim]"
+    )
+    report = routing_evals.evaluate(cases, runs)
+    console.print(routing_evals.format_report(report), markup=False, soft_wrap=True)
+    if json_out:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[dim]Reporte: {json_out}[/dim]")
 
 
 if __name__ == "__main__":

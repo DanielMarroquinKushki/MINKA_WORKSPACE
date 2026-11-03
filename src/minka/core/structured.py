@@ -67,11 +67,13 @@ def call_structured_result(
     tool_description: str,
     max_tokens: int = 1024,
     retry_transient: bool = False,
-) -> tuple[T | None, StructuredError | None, int]:
-    """(instancia validada | None, error | None, reintentos hechos).
+    retry_validation: bool = False,
+) -> tuple[T | None, StructuredError | None, int, dict]:
+    """(instancia validada | None, error | None, reintentos hechos, usage acumulado).
 
-    Con retry_transient, un error transitorio se reintenta UNA vez tras
-    RETRY_DELAY_S; el resto de errores no se reintenta.
+    Con retry_transient, un error transitorio se reintenta UNA vez tras RETRY_DELAY_S;
+    con retry_validation, una respuesta que no valida (p.ej. agente inventado) se pide
+    UNA vez más. El resto de errores no se reintenta. usage suma todas las llamadas.
     """
     tool = {
         "name": tool_name,
@@ -79,6 +81,8 @@ def call_structured_result(
         "input_schema": schema_model.model_json_schema(),
     }
     retries = 0
+    usage = {"model": model, "requests": 0, "input_tokens": 0, "output_tokens": 0,
+             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
     while True:
         try:
             response = client.messages.create(
@@ -89,23 +93,36 @@ def call_structured_result(
                 tool_choice={"type": "tool", "name": tool_name},
                 messages=messages,
             )
-            break
         except Exception as exc:  # noqa: BLE001 — se clasifica, nunca se relanza
             kind = classify_exception(exc)
             if kind == "transient" and retry_transient and retries == 0:
                 retries += 1
                 time.sleep(RETRY_DELAY_S)
                 continue
-            return None, StructuredError(kind, type(exc).__name__, str(exc)[:200]), retries
+            return None, StructuredError(kind, type(exc).__name__, str(exc)[:200]), retries, usage
+        _accumulate(usage, getattr(response, "usage", None))
 
-    for block in getattr(response, "content", []):
-        if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
-            try:
-                return schema_model.model_validate(block.input), None, retries
-            except ValidationError as exc:
-                return None, StructuredError("validation", "ValidationError", str(exc)[:200]), retries
-    stop = getattr(response, "stop_reason", None)
-    return None, StructuredError("no_tool_block", "", f"sin bloque {tool_name}; stop_reason={stop}"), retries
+        error = None
+        for block in getattr(response, "content", []):
+            if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
+                try:
+                    return schema_model.model_validate(block.input), None, retries, usage
+                except ValidationError as exc:
+                    error = StructuredError("validation", "ValidationError", str(exc)[:200])
+                    break
+        if error is None:
+            stop = getattr(response, "stop_reason", None)
+            error = StructuredError("no_tool_block", "", f"sin bloque {tool_name}; stop_reason={stop}")
+        if error.kind == "validation" and retry_validation and retries == 0:
+            retries += 1
+            continue
+        return None, error, retries, usage
+
+
+def _accumulate(usage: dict, response_usage) -> None:
+    usage["requests"] += 1
+    for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+        usage[key] += getattr(response_usage, key, 0) or 0
 
 
 def call_structured(

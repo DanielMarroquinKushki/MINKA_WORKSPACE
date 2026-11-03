@@ -51,35 +51,35 @@ def sin_espera(monkeypatch):
 
 def test_transient_reintenta_una_vez_y_sale_bien():
     client = _Client(APITimeoutError("timeout"), _tool_use({"agent": "a"}))
-    result, error, retries = _call(client)
+    result, error, retries, _ = _call(client)
     assert result.agent == "a" and error is None and retries == 1 and client.calls == 2
 
 
 def test_transient_dos_veces_devuelve_el_error_sin_tercer_intento():
     client = _Client(APITimeoutError("t1"), APITimeoutError("t2"))
-    result, error, retries = _call(client)
+    result, error, retries, _ = _call(client)
     assert result is None and error.kind == "transient" and retries == 1 and client.calls == 2
     assert error.exc_class == "APITimeoutError" and error.message == "t2"
 
 
 def test_api_no_reintenta():
     client = _Client(ValueError("x" * 500), _tool_use({"agent": "a"}))
-    result, error, retries = _call(client)
+    result, error, retries, _ = _call(client)
     assert result is None and error.kind == "api" and retries == 0 and client.calls == 1
     assert len(error.message) == 200
 
 
 def test_sin_retry_transient_no_reintenta():
     client = _Client(APITimeoutError("t"), _tool_use({"agent": "a"}))
-    result, error, retries = _call(client, retry=False)
+    result, error, retries, _ = _call(client, retry=False)
     assert result is None and error.kind == "transient" and client.calls == 1
 
 
 def test_no_tool_block_y_validation():
     sin_bloque = SimpleNamespace(content=[SimpleNamespace(type="text", text="hola")], stop_reason="end_turn")
-    _, error, _ = _call(_Client(sin_bloque))
+    _, error, _, _ = _call(_Client(sin_bloque))
     assert error.kind == "no_tool_block" and "end_turn" in error.message
-    _, error, _ = _call(_Client(_tool_use({"otro": 1})))
+    _, error, _, _ = _call(_Client(_tool_use({"otro": 1})))
     assert error.kind == "validation" and error.exc_class == "ValidationError"
 
 
@@ -121,3 +121,47 @@ def test_schema_plan_acepta_reasoning_opcional():
     plan = Plan.model_validate({"steps": [], "reasoning": "nada que hacer"})
     assert plan.reasoning == "nada que hacer"
     assert "reasoning" in Plan.model_json_schema()["properties"]
+
+
+def test_validation_se_reintenta_una_vez_si_se_pide():
+    client = _Client(_tool_use({"otro": 1}), _tool_use({"agent": "a"}))
+    result, error, retries, usage = call_structured_result(
+        client, "m", "sys", [{"role": "user", "content": "x"}], Demo, "submit_demo", "d",
+        retry_validation=True,
+    )
+    assert result.agent == "a" and error is None and retries == 1 and client.calls == 2
+    assert usage["requests"] == 2
+    client = _Client(_tool_use({"otro": 1}), _tool_use({"otro": 2}))
+    result, error, retries, _ = call_structured_result(
+        client, "m", "sys", [{"role": "user", "content": "x"}], Demo, "submit_demo", "d",
+        retry_validation=True,
+    )
+    assert result is None and error.kind == "validation" and retries == 1 and client.calls == 2
+
+
+def test_usage_acumula_tokens_de_la_respuesta():
+    resp = _tool_use({"agent": "a"})
+    resp.usage = SimpleNamespace(input_tokens=100, output_tokens=7, cache_read_input_tokens=50,
+                                 cache_creation_input_tokens=0)
+    _, _, _, usage = _call(_Client(resp))
+    assert usage["input_tokens"] == 100 and usage["output_tokens"] == 7
+    assert usage["cache_read_input_tokens"] == 50 and usage["model"] == "m"
+
+
+def test_plan_with_router_validation_cae_a_no_plan(monkeypatch):
+    monkeypatch.setattr(
+        planner, "_llm_plan",
+        lambda task, context="": planner.LLMPlan(None, StructuredError("validation", "ValidationError", "agent inventado"), None, 1),
+    )
+    result = planner.plan_with_router("¿dónde se resuelve el token?", use_llm=True)
+    assert result.router == "no_plan" and result.steps == [] and result.retries == 1
+    assert result.planner_error["kind"] == "validation"
+
+
+def test_schema_plan_pistas_nuevas():
+    from minka.core.schemas import Plan
+
+    props = Plan.model_json_schema()["properties"]
+    assert props["steps"]["description"] == "Al menos un paso; si no es una tarea concreta, architecture_agent."
+    assert "máximo 6 palabras" in props["reasoning"]["description"]
+    assert Plan.model_validate({"steps": []}).reasoning is None  # sigue opcional
