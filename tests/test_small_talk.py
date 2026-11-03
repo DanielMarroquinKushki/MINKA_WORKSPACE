@@ -23,13 +23,13 @@ def orch(monkeypatch):
 
 @pytest.mark.parametrize("texto", ["hola", "Gracias!", "¡Buenos días!", "ok"])
 def test_saludo_no_llama_planner_ni_agentes(orch, monkeypatch, texto):
-    monkeypatch.setattr(orch_mod, "make_plan", lambda *a, **k: pytest.fail("no debía planear"))
+    monkeypatch.setattr(orch_mod, "plan_with_router", lambda *a, **k: pytest.fail("no debía planear"))
     reply = orch.run(texto)
     assert "Agentes disponibles: architecture, development, pr_review" in reply
 
 
 def test_saludo_tras_historial_interactivo(orch, monkeypatch):
-    monkeypatch.setattr(orch_mod, "make_plan", lambda *a, **k: pytest.fail("no debía planear"))
+    monkeypatch.setattr(orch_mod, "plan_with_router", lambda *a, **k: pytest.fail("no debía planear"))
     task = f"Historial de esta sesión:\n[Turno 1] Dev: analiza X\n---\n\n{CURRENT_REQUEST_MARKER}\nhola"
     assert "Agentes disponibles" in orch.run(task)
 
@@ -40,6 +40,6 @@ def test_saludo_con_pedido_si_pasa_al_planner(monkeypatch):
     def plan(*a, **k):
         raise _PlanLlamado
 
-    monkeypatch.setattr(orch_mod, "make_plan", plan)
+    monkeypatch.setattr(orch_mod, "plan_with_router", plan)
     with pytest.raises(_PlanLlamado):
         Orchestrator(config=config).run("hola, analiza X", resume=False)

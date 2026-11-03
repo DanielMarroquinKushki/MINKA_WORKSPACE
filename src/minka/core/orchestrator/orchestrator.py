@@ -11,12 +11,17 @@ ApprovalGate, así que el orquestador no necesita re-implementar el gate.
 """
 
 import json
+import os
+import uuid
+from time import perf_counter
 
 from rich.console import Console
 from rich.panel import Panel
 
+from minka._app import SOURCE_ENV
 from minka.config_loader import config
-from minka.core.orchestrator.planner import make_plan
+from minka.core import metrics
+from minka.core.orchestrator.planner import plan_with_router
 from minka.core.orchestrator.small_talk import small_talk_reply
 from minka.core.orchestrator.state_manager import StateManager
 from minka.core.schemas import ReviewDecision
@@ -48,6 +53,14 @@ class Orchestrator:
         # llama (main.py, un script) decide el exit code sin atrapar boto3.
         self.last_run_ok: bool = True
         self.last_usage: dict = {"per_agent": [], "totals": {}}
+        # Métricas de la última corrida (ver core/metrics.py). `source` lo fija
+        # quien crea el orquestador (main.py: repl|cli); SOURCE_ENV lo pisa.
+        self.source: str = "cli"
+        self.last_run_id: str | None = None
+        self.last_router: str | None = None
+        self.last_plan: list[str] = []
+        self.fix_loop_iters: int = 0
+        self.last_run_record: dict = {}
 
     def _get_agent(self, name: str):
         """Lazy-init de agentes: solo se crean cuando se usan (evita crear el
@@ -152,6 +165,8 @@ class Orchestrator:
             self.last_run_ok = False
             return f"Agente desconocido: {forced_agent}"
 
+        self.last_router = "forced"
+        self.last_plan = [name]
         self.state.reset()
         result = agent.run(task)
         self.state.record_step(name, task, result)
@@ -167,11 +182,54 @@ class Orchestrator:
     ) -> str:
         self.last_run_ok = True
         self.last_usage = {"per_agent": [], "totals": {}}
+        self.last_run_id = uuid.uuid4().hex
+        self.last_router = None
+        self.last_plan = []
+        self.fix_loop_iters = 0
+        started = perf_counter()
+        try:
+            return self._run(task, use_llm_planner, resume, forced_agent)
+        except BaseException:
+            self.last_run_ok = False
+            raise
+        finally:
+            self.last_run_record = self._close_run_record(started)
 
+    def _close_run_record(self, started: float) -> dict:
+        """Registro de la corrida: números y nombres, nunca la tarea ni el resultado.
+
+        Best-effort: si falla devuelve {} y el run ya terminó igual.
+        """
+        try:
+            record = metrics.build_run_record(
+                run_id=self.last_run_id,
+                source=os.getenv(SOURCE_ENV) or self.source,
+                project=getattr(config, "ACTIVE_PROJECT", None),
+                cwd=os.getcwd(),
+                router=self.last_router,
+                plan=self.last_plan,
+                fix_loop_iters=self.fix_loop_iters,
+                ok=self.last_run_ok,
+                duration_s=perf_counter() - started,
+                usage=self.last_usage,
+            )
+        except Exception:  # noqa: BLE001
+            return {}
+        metrics.write_run_record(record)
+        return record
+
+    def _run(
+        self,
+        task: str,
+        use_llm_planner: bool,
+        resume: bool,
+        forced_agent: str | None,
+    ) -> str:
         # Saludos/agradecimientos: respuesta fija, sin sesión AWS, planner ni agentes.
         if not forced_agent:
             reply = small_talk_reply(task, AGENT_NAMES)
             if reply:
+                self.last_router = "small_talk"
                 return reply
 
         # Antes de una tarea: sesión AWS utilizable (solo Bedrock). Login solo si
@@ -194,13 +252,15 @@ class Orchestrator:
             self.state.restore(saved.get("state_history", []))
             done = int(saved.get("completed", 0))
             fix_loop_ran = bool(saved.get("fix_loop_ran", False))
+            self.last_router = "resume"
             console.print(f"[dim]Reanudando run: {done}/{len(plan)} pasos ya completados.[/dim]")
         else:
             self.state.reset()
-            plan = make_plan(task, use_llm=use_llm_planner)
+            plan, self.last_router = plan_with_router(task, use_llm=use_llm_planner)
             results = []
             done = 0
             fix_loop_ran = False
+        self.last_plan = [step["agent"] for step in plan]
 
         console.print(
             Panel(
@@ -271,6 +331,7 @@ class Orchestrator:
 
         while iteration < max_iterations:
             iteration += 1
+            self.fix_loop_iters = iteration
 
             # 1. Development agent implementa
             dev_task = original_task
@@ -278,8 +339,10 @@ class Orchestrator:
                 dev_task += "\n\nHallazgos a corregir de la iteración anterior:\n"
                 dev_task += "\n".join(f"- {f}" for f in pending_findings)
 
-            dev_result = self._get_agent("development_agent").run(dev_task)
+            dev_agent = self._get_agent("development_agent")
+            dev_result = dev_agent.run(dev_task)
             self.state.record_step("development_agent", dev_task, dev_result)
+            self._record_usage(dev_agent)
 
             # 2. Revisión del candidato: 4R structured (Nivel 5+) sobre el dev_result,
             #    con fallback a pr_review_agent + _review_decision.
@@ -301,8 +364,10 @@ class Orchestrator:
                 pending = four_r.blockers
             else:
                 review_task = f"Revisa el último cambio aplicado. Contexto: {original_task}"
-                review_result = self._get_agent("pr_review_agent").run(review_task)
+                review_agent = self._get_agent("pr_review_agent")
+                review_result = review_agent.run(review_task)
                 self.state.record_step("pr_review_agent", review_task, review_result)
+                self._record_usage(review_agent)
                 decision = self._review_decision(review_result)
                 routing = decision.routing_decision
                 pending = decision.blockers

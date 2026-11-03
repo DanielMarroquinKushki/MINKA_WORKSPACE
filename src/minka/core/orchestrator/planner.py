@@ -125,13 +125,18 @@ def _llm_plan(task: str) -> list[dict] | None:
         return None
 
 
-def make_plan(task: str, use_llm: bool = True) -> list[dict]:
-    """
-    Devuelve una lista de steps [{"agent": ..., "task": ...}].
-    Intenta LLM; si falla, usa routing por keywords.
+def plan_with_router(task: str, use_llm: bool = True) -> tuple[list[dict], str]:
+    """Steps [{"agent", "task"}] y qué decidió el routing: "llm" o "keyword".
+
+    Intenta LLM; si falla o se pidió sin LLM, usa routing por keywords.
     """
     if use_llm:
         plan = _llm_plan(task)
         if plan:
-            return plan
-    return _keyword_plan(task)
+            return plan, "llm"
+    return _keyword_plan(task), "keyword"
+
+
+def make_plan(task: str, use_llm: bool = True) -> list[dict]:
+    """Solo los steps; ver plan_with_router."""
+    return plan_with_router(task, use_llm)[0]

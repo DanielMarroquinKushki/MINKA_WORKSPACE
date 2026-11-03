@@ -14,6 +14,8 @@ Uso:
     minka --index-knowledge    # Nivel 4 (RAG) — indexa .md de knowledge
     minka --init                       # crea config_local.py y .env en el directorio de datos
     minka --new-project mi-proyecto  # crea el esqueleto de un proyecto nuevo
+    minka stats [--day YYYY-MM-DD | --month YYYY-MM] [--project P] [--agent A]
+    minka "analiza X" --quiet  # sin la línea final de tokens/costo (stderr)
     minka --help
 
 Comandos del modo interactivo:
@@ -23,19 +25,71 @@ Comandos del modo interactivo:
 """
 
 import json
+import os
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
+from typer.core import TyperGroup
 
+from minka._app import QUIET_ENV
 from minka.config_loader import config
+from minka.core import metrics
 from minka.core.orchestrator.small_talk import CURRENT_REQUEST_MARKER
 
+
+class _TaskOrCommandGroup(TyperGroup):
+    """`minka stats` es un subcomando; `minka "estadísticas de hoy"` es una tarea.
+
+    Click deja que el argumento posicional `task` del callback se coma el primer
+    token, así que un subcomando nunca llegaría a despacharse. Si lo que quedó
+    en `task` es el nombre de un subcomando, se reinterpreta como tal y el resto
+    de tokens pasan a ser sus argumentos (--day, --month...).
+    """
+
+    def _first_positional(self, ctx, args: list[str]) -> str | None:
+        value_opts = {
+            opt
+            for param in self.get_params(ctx)
+            if getattr(param, "is_flag", None) is False
+            for opt in (*param.opts, *param.secondary_opts)
+        }
+        expect_value = False
+        for tok in args:
+            if expect_value:
+                expect_value = False
+                continue
+            if tok.startswith("-") and tok != "-":
+                expect_value = tok in value_opts
+                continue
+            return tok
+        return None
+
+    def parse_args(self, ctx, args):
+        # Con una tarea, las opciones pueden ir después (`minka "x" --agent report`,
+        # como las manda el bridge); con un subcomando, lo que sigue es suyo.
+        # El parser lee la bandera del contexto, no del comando.
+        ctx.allow_interspersed_args = self._first_positional(ctx, args) not in self.commands
+        super().parse_args(ctx, args)
+        task = ctx.params.get("task")
+        if task in self.commands:
+            ctx.params["task"] = None
+            ctx.args = [*ctx._protected_args, *ctx.args]
+            ctx._protected_args = [task]
+        return ctx.args
+
+
 app = typer.Typer(
-    add_completion=False, help="Sistema multi-agente para desarrollo asistido por IA."
+    cls=_TaskOrCommandGroup,
+    add_completion=False,
+    invoke_without_command=True,
+    help="Sistema multi-agente para desarrollo asistido por IA.",
 )
 console = Console()
+# Línea final de métricas: stderr para no mezclarse con el resultado (stdout).
+stderr_console = Console(stderr=True)
 
 # Historial de sesión: cuántos turnos recientes se inyectan como contexto y
 # cuánto se trunca cada respuesta (mantiene el contexto acotado por turno).
@@ -79,22 +133,36 @@ def _history_context(history: list[tuple[str, str]]) -> str:
 
 
 def _write_json_out(
-    path: Path, task: str, agent: str | None, result: str, ok: bool, usage: dict | None
+    path: Path,
+    task: str,
+    agent: str | None,
+    result: str,
+    ok: bool,
+    usage: dict | None,
+    record: dict | None = None,
 ) -> bool:
     """Escribe el resultado como JSON para consumo programático.
 
     Va a un archivo y no a stdout porque stdout lleva la UI de Rich (paneles,
     plan de ejecución) y no es parseable. Devuelve False si no pudo escribir:
     el resultado ya se imprimió, así que un fallo aquí no debe romper el run.
+    Las claves de métricas (run_id, duration_s, cost_usd, baseline_usd,
+    pricing_version) son adicionales: quien solo lee ok/result/usage no cambia.
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        record = record or {}
         payload = {
             "ok": ok,
             "agent": agent,
             "task": task,
             "result": result,
             "usage": usage or {},
+            "run_id": record.get("run_id"),
+            "duration_s": record.get("duration_s"),
+            "cost_usd": record.get("cost_usd"),
+            "baseline_usd": record.get("baseline_usd"),
+            "pricing_version": record.get("pricing_version"),
         }
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return True
@@ -145,13 +213,33 @@ def _print_status(history: list[tuple[str, str]]) -> None:
     console.print(Panel("\n".join(lines), title="Estado del sistema", border_style="cyan"))
 
 
-@app.command()
+def _print_run_summary(orchestrator, quiet: bool) -> None:
+    """Línea final de la corrida en stderr (tokens, cache, costo, tiempo, agentes)."""
+    if quiet or os.getenv(QUIET_ENV):
+        return
+    record = getattr(orchestrator, "last_run_record", None)
+    if record:
+        # soft_wrap: una sola línea, sin cortes por ancho de terminal (parseable).
+        stderr_console.print(
+            metrics.format_run_summary(record),
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+            style="dim",
+        )
+
+
+@app.callback()
 def main(
+    ctx: typer.Context,
     task: str = typer.Argument(
         None, help="Tarea a ejecutar (opcional). Sin ella, entra en modo interactivo."
     ),
     interactive: bool = typer.Option(
         True, "--interactive/--no-interactive", help="Modo conversacional."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", help="Omite la línea final de tokens/costo (va a stderr)."
     ),
     level: int = typer.Option(None, help="Override del nivel de autonomía (3-6)."),
     project: str = typer.Option(
@@ -208,6 +296,10 @@ def main(
         help="Escribe el resultado como JSON en esta ruta (stdout lleva la UI de Rich).",
     ),
 ):
+    # Subcomando (`minka stats`): no es una corrida, nada de lo de abajo aplica.
+    if ctx.invoked_subcommand:
+        return
+
     console.print(
         Panel(
             "[bold blue]dev-agent[/bold blue]\n"
@@ -400,6 +492,7 @@ def main(
 
     _require_llm_backend()
     orchestrator = _make_orchestrator()
+    orchestrator.source = "cli" if task else "repl"
 
     if task:
         try:
@@ -416,12 +509,19 @@ def main(
             raise typer.Exit(code=130)
         # Texto del agente tal cual: sin marcado de Rich (no se come los [...]).
         console.print(result, markup=False)
+        _print_run_summary(orchestrator, quiet)
         # last_run_ok distingue "corrió y respondió" de "no pudo correr"
         # (p.ej. sesión AWS expirada, que devuelve un string, no una excepción).
         ok = getattr(orchestrator, "last_run_ok", True)
         if json_out:
             _write_json_out(
-                json_out, task, agent, result, ok, getattr(orchestrator, "last_usage", None)
+                json_out,
+                task,
+                agent,
+                result,
+                ok,
+                getattr(orchestrator, "last_usage", None),
+                getattr(orchestrator, "last_run_record", None),
             )
         if not ok:
             raise typer.Exit(code=1)
@@ -456,9 +556,76 @@ def main(
                 result = orchestrator.run(task_text, use_llm_planner=not no_llm_planner)
                 history.append((user_input, result))
                 console.print(f"\n{result}\n", markup=False)
+                _print_run_summary(orchestrator, quiet)
         except (KeyboardInterrupt, EOFError):
             pass
         console.print("\nSesión terminada. Hasta luego.")
+
+
+@app.command("stats", help="Tokens, cache, costo y tiempo de las corridas registradas.")
+def stats(
+    day: str = typer.Option(None, "--day", help="Día local YYYY-MM-DD (default: hoy)."),
+    month: str = typer.Option(None, "--month", help="Mes local YYYY-MM (agrega sus días)."),
+    project: str = typer.Option(None, "--project", help="Solo corridas de este proyecto."),
+    agent: str = typer.Option(None, "--agent", help="Solo este agente (p.ej. development)."),
+):
+    label = f"mes {month}" if month else f"día {day or metrics.local_day()}"
+    agg = metrics.aggregate(metrics.read_run_records(day=day, month=month), project, agent)
+    if not agg["runs"]:
+        console.print(f"Sin corridas registradas para {label}.")
+        return
+
+    tokens = agg["tokens"]
+    total = sum(
+        tokens[k]
+        for k in (
+            "input_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+            "output_tokens",
+        )
+    )
+    saving = ""
+    if agg["baseline_usd"]:
+        pct = (agg["baseline_usd"] - agg["cost_usd"]) / agg["baseline_usd"]
+        saving = f" (baseline opus {metrics.fmt_usd(agg['baseline_usd'])}, ahorro {pct:.0%})"
+    console.print(
+        f"[bold]{label}[/bold] · corridas {agg['runs']} · ok {agg['ok']} · "
+        f"{agg['duration_s'] / 60:.0f} min · {metrics.fmt_tokens(total)} tokens "
+        f"({metrics.fmt_cache(tokens)}) · {metrics.fmt_usd(agg['cost_usd'])}{saving} "
+        f"{metrics.SCOPE_NOTE}",
+        soft_wrap=True,
+    )
+
+    table = Table(show_edge=False, pad_edge=False)
+    for col in ("agente", "corridas", "requests", "tokens", "cache", "$", "p90 $"):
+        table.add_column(col, justify="left" if col == "agente" else "right")
+    for name, row in sorted(agg["agents"].items(), key=lambda kv: -kv[1]["cost_usd"]):
+        row_total = sum(
+            row[k]
+            for k in (
+                "input_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+                "output_tokens",
+            )
+        )
+        table.add_row(
+            name,
+            str(row["runs"]),
+            str(row["requests"]),
+            metrics.fmt_tokens(row_total),
+            metrics.fmt_cache(row).removeprefix("cache "),
+            metrics.fmt_usd(row["cost_usd"]),
+            metrics.fmt_usd(row["p90_usd"]),
+        )
+    console.print(table)
+
+    routers = " · ".join(f"{k} {v}" for k, v in sorted(agg["routers"].items()))
+    console.print(
+        f"[dim]router: {routers}     fix-loop: {agg['fix_loop_runs']} corrida(s), "
+        f"{agg['fix_loop_iters']} iteraciones[/dim]"
+    )
 
 
 if __name__ == "__main__":

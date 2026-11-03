@@ -6,6 +6,10 @@ la configuración (los tests fijan el directorio de datos ANTES de importar conf
 
 APP_NAME = "minka"
 DATA_DIR_ENV = f"{APP_NAME.upper()}_HOME"
+# Quién lanzó la corrida (repl|cli|bridge|evals) cuando no es la propia CLI; y
+# apagado de la línea final de métricas sin cambiar el comando (p.ej. desde el bridge).
+SOURCE_ENV = f"{APP_NAME.upper()}_SOURCE"
+QUIET_ENV = f"{APP_NAME.upper()}_QUIET"
 DIST_NAME = f"{APP_NAME}-workspace"  # nombre de la distribución (pip / uv)
 _INSTALL_PLACEHOLDER = "git+<url-del-repo>"
 
