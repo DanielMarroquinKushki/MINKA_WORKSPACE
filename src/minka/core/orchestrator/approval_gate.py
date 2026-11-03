@@ -19,6 +19,24 @@ from rich.syntax import Syntax
 
 console = Console()
 
+# Diffs propuestos (aprobados o no) desde el último reset: el fix-loop solo
+# revisa si development propuso algún cambio.
+_requests_this_run = 0
+
+
+def _count_request() -> None:
+    global _requests_this_run
+    _requests_this_run += 1
+
+
+def reset_request_count() -> None:
+    global _requests_this_run
+    _requests_this_run = 0
+
+
+def request_count() -> int:
+    return _requests_this_run
+
 
 class ApprovalGate:
     def __init__(self, config):
@@ -27,6 +45,7 @@ class ApprovalGate:
 
     def request(self, file_path: str, new_content: str, reason: str) -> bool:
         """Muestra el diff propuesto y pide aprobación. Devuelve True/False."""
+        _count_request()
         original = ""
         p = Path(file_path)
         if p.is_file():

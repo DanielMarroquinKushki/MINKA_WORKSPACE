@@ -55,6 +55,8 @@ def build_run_record(
     ok: bool,
     duration_s: float,
     usage: dict,
+    reason: str | None = None,
+    confidence: str | None = None,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -77,6 +79,8 @@ def build_run_record(
         "project": project,
         "cwd": cwd,
         "router": router,
+        "reason": reason,
+        "confidence": confidence,
         "plan": list(plan),
         "fix_loop_iters": fix_loop_iters,
         "ok": ok,
@@ -87,6 +91,11 @@ def build_run_record(
         "baseline_usd": round(base, 6) if priced else None,
         "pricing_version": PRICING_VERSION,
     }
+
+
+def run_cost_usd(usage: dict) -> float:
+    """Costo acumulado de los agentes de la corrida (0 para modelos sin tarifa)."""
+    return sum(cost_usd(u) or 0.0 for u in usage.get("per_agent", []))
 
 
 def write_run_record(record: dict, cfg=None) -> bool:

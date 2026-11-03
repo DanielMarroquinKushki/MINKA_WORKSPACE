@@ -196,6 +196,8 @@ PROMPT_REGISTRY_ENABLED = os.getenv("PROMPT_REGISTRY_ENABLED", "").strip().lower
 # Evaluador — Nivel 5+ (stub por ahora)
 # ---------------------------------------------------------------------------
 EVALUATOR_ENABLED = False
+# Tope de costo de una corrida con fix-loop (tarifa de lista, core/pricing.py). 0 = sin tope.
+FIX_LOOP_MAX_USD = float(os.getenv("FIX_LOOP_MAX_USD", "2.0"))
 RUN_TESTS_AFTER_CHANGE = False
 GO_TEST_TIMEOUT = "30s"  # legacy (formato flag de Go); usar GO_TEST_TIMEOUT_SECONDS
 GO_TEST_TIMEOUT_SECONDS = int(os.getenv("GO_TEST_TIMEOUT_SECONDS", "60"))
@@ -229,7 +231,7 @@ else:
 # Minutos antes de expirar con los que se considera un token "por vencer".
 BEDROCK_REFRESH_BEFORE_MINUTES = 5
 # Saludos que se responden sin LLM (pedido completo, normalizado: minúsculas, sin
-# tildes ni puntuación). Ver core/orchestrator/small_talk.py.
+# tildes ni puntuación). Ver core/orchestrator/router.py.
 SMALL_TALK_MAX_WORDS = 4
 SMALL_TALK_PATTERNS = [
     r"(hola|buenas|buenos dias|buenas tardes|buenas noches|hey|hi|hello)( minka)?",

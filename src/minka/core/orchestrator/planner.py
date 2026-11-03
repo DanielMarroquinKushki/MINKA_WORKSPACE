@@ -96,8 +96,30 @@ def _keyword_plan(task: str) -> list[dict]:
     return [{"agent": "architecture_agent", "task": task}]
 
 
-def _llm_plan(task: str) -> list[dict] | None:
-    """Intenta obtener un plan del LLM vía salida estructurada. None si falla."""
+# El historial de la sesión viaja en un bloque aparte: sirve para resolver
+# seguimientos ("¿y en el otro repo?"), nunca para decidir el agente.
+CONTEXT_LABEL = "Contexto de turnos previos (contexto, no enrutar; solo para resolver seguimientos):"
+
+
+def _planner_messages(task: str, context: str) -> list[dict]:
+    if not context:
+        return [{"role": "user", "content": task}]
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": f"{CONTEXT_LABEL}\n{context}"},
+                {"type": "text", "text": f"Pedido actual:\n{task}"},
+            ],
+        }
+    ]
+
+
+def _llm_plan(task: str, context: str = "") -> list[dict] | None:
+    """Intenta obtener un plan del LLM vía salida estructurada. None si falla.
+
+    `task` es SOLO el pedido actual; `context` el historial rotulado aparte.
+    """
     try:
         # Imports perezosos: el routing por keywords no necesita cliente LLM.
         # Usa el mismo backend (Bedrock/API directa) que los agentes.
@@ -113,7 +135,7 @@ def _llm_plan(task: str) -> list[dict] | None:
             client,
             model,
             system=load_system_prompt("orchestrator"),
-            messages=[{"role": "user", "content": task}],
+            messages=_planner_messages(task, context),
             schema_model=Plan,
             tool_name="submit_plan",
             tool_description="Devuelve el plan de ejecución: agentes y tareas en orden.",
@@ -125,16 +147,21 @@ def _llm_plan(task: str) -> list[dict] | None:
         return None
 
 
-def plan_with_router(task: str, use_llm: bool = True) -> tuple[list[dict], str]:
-    """Steps [{"agent", "task"}] y qué decidió el routing: "llm" o "keyword".
+def plan_with_router(
+    task: str, use_llm: bool = True, context: str = ""
+) -> tuple[list[dict], str, bool]:
+    """(steps, router, llm_failed). router: "llm" o "keyword".
 
-    Intenta LLM; si falla o se pidió sin LLM, usa routing por keywords.
+    Intenta LLM sobre el pedido actual (`task`) con el historial aparte (`context`);
+    si falla o se pidió sin LLM, usa routing por keywords solo sobre `task`.
+    llm_failed distingue "se pidió keywords" de "el LLM no respondió".
     """
     if use_llm:
-        plan = _llm_plan(task)
+        plan = _llm_plan(task, context)
         if plan:
-            return plan, "llm"
-    return _keyword_plan(task), "keyword"
+            return plan, "llm", False
+        return _keyword_plan(task), "keyword", True
+    return _keyword_plan(task), "keyword", False
 
 
 def make_plan(task: str, use_llm: bool = True) -> list[dict]:

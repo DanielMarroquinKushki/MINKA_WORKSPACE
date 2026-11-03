@@ -34,10 +34,11 @@ from rich.panel import Panel
 from rich.table import Table
 from typer.core import TyperGroup
 
-from minka._app import QUIET_ENV
+from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
 from minka.core import metrics
-from minka.core.orchestrator.small_talk import CURRENT_REQUEST_MARKER
+from minka.core.orchestrator import router
+from minka.core.orchestrator.router import CURRENT_REQUEST_MARKER
 
 
 class _TaskOrCommandGroup(TyperGroup):
@@ -100,7 +101,7 @@ HISTORY_RESULT_CHARS = 1500
 # ApprovalGate, así que no se cuelgan esperando confirmación en stdin cuando el
 # proceso corre sin terminal (llamado desde otra herramienta).
 # development y debug quedan fuera: escriben, y su gate necesita un humano.
-READONLY_AGENTS = ("architecture", "report", "pr_review")
+READONLY_AGENTS = tuple(a.removesuffix("_agent") for a in router.READONLY_AGENTS)
 
 
 def _require_llm_backend() -> None:
@@ -159,6 +160,9 @@ def _write_json_out(
             "result": result,
             "usage": usage or {},
             "run_id": record.get("run_id"),
+            "router": record.get("router"),
+            "reason": record.get("reason"),
+            "confidence": record.get("confidence"),
             "duration_s": record.get("duration_s"),
             "cost_usd": record.get("cost_usd"),
             "baseline_usd": record.get("baseline_usd"),
@@ -239,7 +243,12 @@ def main(
         True, "--interactive/--no-interactive", help="Modo conversacional."
     ),
     quiet: bool = typer.Option(
-        False, "--quiet", help="Omite la línea final de tokens/costo (va a stderr)."
+        False, "--quiet", help="Omite las líneas de decisión y de tokens/costo (van a stderr)."
+    ),
+    read_only: bool = typer.Option(
+        False,
+        "--read-only",
+        help=f"Si el router infiere un agente que escribe, responde y sale con 2. Implícito con {SOURCE_ENV}=bridge.",
     ),
     level: int = typer.Option(None, help="Override del nivel de autonomía (3-6)."),
     project: str = typer.Option(
@@ -493,6 +502,8 @@ def main(
     _require_llm_backend()
     orchestrator = _make_orchestrator()
     orchestrator.source = "cli" if task else "repl"
+    orchestrator.quiet = quiet
+    orchestrator.read_only = read_only or os.getenv(SOURCE_ENV) == "bridge"
 
     if task:
         try:
@@ -524,7 +535,7 @@ def main(
                 getattr(orchestrator, "last_run_record", None),
             )
         if not ok:
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=getattr(orchestrator, "last_exit_code", None) or 1)
         return
 
     if interactive:
@@ -545,6 +556,7 @@ def main(
                     continue
                 if low == "/clear":
                     history.clear()
+                    orchestrator.clear_session()
                     console.print("[dim]Historial limpio.[/dim]")
                     continue
                 if low.startswith("/"):

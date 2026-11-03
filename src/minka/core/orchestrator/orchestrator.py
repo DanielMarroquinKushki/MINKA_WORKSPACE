@@ -18,11 +18,10 @@ from time import perf_counter
 from rich.console import Console
 from rich.panel import Panel
 
-from minka._app import SOURCE_ENV
+from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
 from minka.core import metrics
-from minka.core.orchestrator.planner import plan_with_router
-from minka.core.orchestrator.small_talk import small_talk_reply
+from minka.core.orchestrator import approval_gate, router
 from minka.core.orchestrator.state_manager import StateManager
 from minka.core.schemas import ReviewDecision
 
@@ -61,6 +60,22 @@ class Orchestrator:
         self.last_plan: list[str] = []
         self.fix_loop_iters: int = 0
         self.last_run_record: dict = {}
+        # Router (core/orchestrator/router.py): decisión del último run y turnos de
+        # la sesión (pedido recortado + agentes) para estado y seguimientos.
+        self.last_reason: str | None = None
+        self.last_confidence: str | None = None
+        self.last_decision: router.RouteDecision | None = None
+        self.last_exit_code: int | None = None
+        self.session_turns: list[dict] = []
+        # Los fija main.py: --quiet apaga la línea de decisión (stderr);
+        # --read-only (o MINKA_SOURCE=bridge) rechaza agentes que escriben.
+        self.quiet: bool = False
+        self.read_only: bool = False
+        self._stderr = Console(stderr=True)
+
+    def clear_session(self) -> None:
+        """Olvida los turnos de la sesión (REPL /clear)."""
+        self.session_turns.clear()
 
     def _get_agent(self, name: str):
         """Lazy-init de agentes: solo se crean cuando se usan (evita crear el
@@ -150,8 +165,8 @@ class Orchestrator:
         except Exception:  # noqa: BLE001 — métricas best-effort
             pass
 
-    def _run_forced(self, task: str, forced_agent: str) -> str:
-        """Ejecuta un solo agente, saltando el planner.
+    def _run_forced(self, task: str, request: str, forced_agent: str) -> str:
+        """Ejecuta un solo agente, saltando el router (override --agent).
 
         Existe para llamadas programáticas: sin planner no hay una llamada extra
         al LLM para decidir el routing, y el resultado es determinista.
@@ -165,12 +180,15 @@ class Orchestrator:
             self.last_run_ok = False
             return f"Agente desconocido: {forced_agent}"
 
-        self.last_router = "forced"
+        self._apply_decision(
+            router.RouteDecision("forced", "override --agent", [name], confidence="alta")
+        )
         self.last_plan = [name]
         self.state.reset()
         result = agent.run(task)
         self.state.record_step(name, task, result)
         self._record_usage(agent)
+        self.session_turns.append({"request": request[:120], "agents": [name]})
         return result
 
     def run(
@@ -184,6 +202,10 @@ class Orchestrator:
         self.last_usage = {"per_agent": [], "totals": {}}
         self.last_run_id = uuid.uuid4().hex
         self.last_router = None
+        self.last_reason = None
+        self.last_confidence = None
+        self.last_decision = None
+        self.last_exit_code = None
         self.last_plan = []
         self.fix_loop_iters = 0
         started = perf_counter()
@@ -212,11 +234,25 @@ class Orchestrator:
                 ok=self.last_run_ok,
                 duration_s=perf_counter() - started,
                 usage=self.last_usage,
+                reason=self.last_reason,
+                confidence=self.last_confidence,
             )
         except Exception:  # noqa: BLE001
             return {}
         metrics.write_run_record(record)
         return record
+
+    def _apply_decision(self, decision: router.RouteDecision) -> None:
+        """Guarda la decisión del router y la anuncia en una línea (stderr)."""
+        self.last_decision = decision
+        self.last_router = decision.router
+        self.last_reason = decision.reason
+        self.last_confidence = decision.confidence
+        if self.quiet or os.getenv(QUIET_ENV):
+            return
+        self._stderr.print(
+            router.describe(decision), markup=False, highlight=False, soft_wrap=True, style="dim"
+        )
 
     def _run(
         self,
@@ -225,12 +261,21 @@ class Orchestrator:
         resume: bool,
         forced_agent: str | None,
     ) -> str:
-        # Saludos/agradecimientos: respuesta fija, sin sesión AWS, planner ni agentes.
-        if not forced_agent:
-            reply = small_talk_reply(task, AGENT_NAMES)
-            if reply:
-                self.last_router = "small_talk"
-                return reply
+        # El historial que antepone main.py no se enruta: solo el pedido actual.
+        context, request = router.split_request(task)
+        repos = getattr(config, "REPOS", {})
+
+        # Un run interrumpido de la MISMA tarea se reanuda tal cual, sin re-enrutar.
+        saved = self._load_state() if (resume and not forced_agent) else None
+        resuming = bool(saved and saved.get("task") == task)
+
+        # Capas 1 y 4 (costo 0, sin sesión AWS): saludo, estado, meta, ambigüedad.
+        decision = None
+        if not forced_agent and not resuming:
+            decision = router.local_decision(request, self.session_turns, AGENT_NAMES, repos)
+            if decision is not None and decision.reply is not None:
+                self._apply_decision(decision)
+                return decision.reply
 
         # Antes de una tarea: sesión AWS utilizable (solo Bedrock). Login solo si
         # el token venció; sin TTY o sin red devuelve el mensaje, sin esperar.
@@ -242,21 +287,36 @@ class Orchestrator:
 
         # Agente forzado: un solo paso, sin planner ni checkpoint/resume.
         if forced_agent:
-            return self._run_forced(task, forced_agent)
+            return self._run_forced(task, request, forced_agent)
 
         # Reanudar un run interrumpido de la MISMA tarea, o arrancar fresco.
-        saved = self._load_state() if resume else None
-        if saved and saved.get("task") == task:
+        if resuming:
             plan = saved["plan"]
             results: list[str] = list(saved.get("results", []))
             self.state.restore(saved.get("state_history", []))
             done = int(saved.get("completed", 0))
             fix_loop_ran = bool(saved.get("fix_loop_ran", False))
-            self.last_router = "resume"
+            self._apply_decision(
+                router.RouteDecision("resume", "run reanudado", [s["agent"] for s in plan])
+            )
             console.print(f"[dim]Reanudando run: {done}/{len(plan)} pasos ya completados.[/dim]")
         else:
             self.state.reset()
-            plan, self.last_router = plan_with_router(task, use_llm=use_llm_planner)
+            if decision is None:  # capas 2 y 3: planner + reglas duras
+                decision = router.plan_decision(
+                    request, context, use_llm_planner, self.session_turns, repos
+                )
+            self._apply_decision(decision)
+            if self.read_only and any(a not in router.READONLY_AGENTS for a in decision.agents):
+                self.last_run_ok = False
+                self.last_exit_code = 2
+                return router.read_only_message(decision.agents)
+            # Solo el plan del LLM trae tareas propias; keyword/herencia reciben la
+            # tarea completa (con historial), como siempre.
+            if decision.router == "llm":
+                plan = decision.steps
+            else:
+                plan = [{"agent": a, "task": task} for a in decision.agents]
             results = []
             done = 0
             fix_loop_ran = False
@@ -288,8 +348,16 @@ class Orchestrator:
                 continue
             fix_loop_ran = False
 
-            if step["agent"] == "development_agent" and getattr(config, "EVALUATOR_ENABLED", False):
-                # Nivel 5+: development → pr_review → fix, max 3 iteraciones.
+            # Nivel 5+: fix-loop solo con decisión de confianza alta y verbo de
+            # escritura explícito; si no, development corre una vez, sin revisión.
+            fix_loop_ok = (
+                step["agent"] == "development_agent"
+                and getattr(config, "EVALUATOR_ENABLED", False)
+                and self.last_confidence == "alta"
+                and router.has_write_verb(request)
+            )
+            if fix_loop_ok:
+                # development → revisión → fix, max 3 iteraciones.
                 # El registro de steps lo hace _fix_loop internamente.
                 result = self._fix_loop(step["task"])
                 fix_loop_ran = True
@@ -306,6 +374,7 @@ class Orchestrator:
             self._save_state(task, plan, results, i + 1, fix_loop_ran)
 
         self._clear_state()
+        self.session_turns.append({"request": request[:120], "agents": list(self.last_plan)})
 
         if getattr(config, "META_AGENT_ENABLED", False) and len(self.state.steps) >= 5:
             console.print(
@@ -328,6 +397,8 @@ class Orchestrator:
 
         iteration = 0
         pending_findings = []
+        consecutive_fixes = 0
+        max_usd = float(getattr(config, "FIX_LOOP_MAX_USD", 0) or 0)
 
         while iteration < max_iterations:
             iteration += 1
@@ -339,10 +410,21 @@ class Orchestrator:
                 dev_task += "\n\nHallazgos a corregir de la iteración anterior:\n"
                 dev_task += "\n".join(f"- {f}" for f in pending_findings)
 
+            approval_gate.reset_request_count()
             dev_agent = self._get_agent("development_agent")
             dev_result = dev_agent.run(dev_task)
             self.state.record_step("development_agent", dev_task, dev_result)
             self._record_usage(dev_agent)
+
+            # Sin diff propuesto no hay cambio que revisar: la revisión costaría
+            # cuatro llamadas sobre texto.
+            if approval_gate.request_count() == 0:
+                return dev_result
+            if max_usd and metrics.run_cost_usd(self.last_usage) > max_usd:
+                return (
+                    f"⚠️ Fix-loop detenido: la corrida supera FIX_LOOP_MAX_USD "
+                    f"(${max_usd:.2f}). Revisa manualmente.\n\n{dev_result}"
+                )
 
             # 2. Revisión del candidato: 4R structured (Nivel 5+) sobre el dev_result,
             #    con fallback a pr_review_agent + _review_decision.
@@ -383,6 +465,12 @@ class Orchestrator:
 
             # routing == "corregir" → usa los hallazgos y reintenta
             pending_findings = pending or ["Revisar hallazgos de la revisión"]
+            consecutive_fixes += 1
+            if consecutive_fixes >= 2:
+                return (
+                    "⚠️ Dos revisiones seguidas pidieron correcciones — requiere revisión humana.\n\n"
+                    "Hallazgos pendientes:\n" + "\n".join(f"- {f}" for f in pending_findings)
+                )
 
             if iteration < max_iterations:
                 console.print(
