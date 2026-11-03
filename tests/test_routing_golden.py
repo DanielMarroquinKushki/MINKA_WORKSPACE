@@ -164,6 +164,7 @@ def test_pr_review_con_cambios_pendientes_lanza_el_agente(harness, monkeypatch):
 
 
 def test_debug_muestra_planner_error_y_reasoning(harness, monkeypatch):
+    monkeypatch.setattr(config, "PLANNER_SKIP_INFO", False, raising=False)  # probar el planner
     monkeypatch.setattr(config, "DEBUG", True)
     harness.llm_plan = None
     harness.orch.run("analiza las dependencias del módulo de pagos")
@@ -174,6 +175,7 @@ def test_debug_muestra_planner_error_y_reasoning(harness, monkeypatch):
 
 
 def test_reasoning_llega_a_metrics_y_a_debug(harness, monkeypatch):
+    monkeypatch.setattr(config, "PLANNER_SKIP_INFO", False, raising=False)  # probar el planner
     monkeypatch.setattr(config, "DEBUG", True)
     monkeypatch.setattr(
         planner, "_llm_plan",
@@ -187,6 +189,7 @@ def test_reasoning_llega_a_metrics_y_a_debug(harness, monkeypatch):
 
 
 def test_validation_del_planner_cae_a_la_red_de_seguridad(harness, monkeypatch):
+    monkeypatch.setattr(config, "PLANNER_SKIP_INFO", False, raising=False)  # probar el planner
     invalid = planner.LLMPlan(None, StructuredError("validation", "ValidationError", "agente inventado"), None, 1)
     monkeypatch.setattr(planner, "_llm_plan", lambda task, context="": invalid)
     harness.orch.run("¿dónde se resuelve el token?")  # pregunta de información → architecture
@@ -199,3 +202,24 @@ def test_validation_del_planner_cae_a_la_red_de_seguridad(harness, monkeypatch):
     out = harness.orch.run("cuéntame un chiste")
     assert harness.ran == [] and "No identifiqué una tarea" in out
     assert "→ sin agente (planner: respuesta inválida)" in harness.lines[-1]
+
+
+def test_planner_skip_info_apagado_vuelve_al_planner(harness, monkeypatch):
+    monkeypatch.setattr(config, "PLANNER_SKIP_INFO", False, raising=False)
+    harness.llm_plan = ["architecture_agent"]
+    harness.orch.run("¿dónde se resuelve el token?")
+    assert harness.ran == ["architecture_agent"] and harness.orch.last_router == "llm"
+    assert harness.llm_calls == 1
+
+
+def test_palabras_de_fallo_exigen_forma_de_error():
+    assert router_mod.has_failure("muestra dónde se configura el timeout") is False
+    assert router_mod.has_failure("falla por timeout") is True
+    assert router_mod.has_failure("el servicio da timeout al cobrar") is True
+    assert router_mod.has_failure("panic: runtime error") is True
+    assert router_mod.has_failure("devuelve 503 al validar") is False  # número suelto no es fallo
+    assert router_mod.has_failure("devuelve 503 error al validar") is True
+    assert router_mod.is_simple_info_question("muestra dónde se configura el timeout") is True
+    assert router_mod.is_simple_info_question("¿por qué falla por timeout?") is False
+    assert router_mod.is_simple_info_question("explica el flujo y luego implementa X") is False
+    assert router_mod.is_simple_info_question("¿dónde está? ¿y cómo se renueva?") is False

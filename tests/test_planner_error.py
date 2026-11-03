@@ -171,3 +171,24 @@ def test_schema_plan_pistas_nuevas():
     assert Plan.model_validate({"steps": [paso]}).reasoning is None
     with pytest.raises(ValidationError):
         Plan.model_validate({"steps": []})
+
+
+def test_schema_de_la_tool_sin_titulo_ni_descripcion_de_nivel_superior():
+    from minka.core.schemas import Plan
+    from minka.core.structured import tool_input_schema
+
+    schema = tool_input_schema(Plan)
+    assert "title" not in schema and "description" not in schema
+    assert schema["properties"]["steps"]["minItems"] == 1  # el resto del schema intacto
+    assert "description" in Plan.model_json_schema()  # el modelo Pydantic no cambia
+
+
+def test_respuesta_anidada_en_una_clave_se_desenvuelve_sin_llamada_extra():
+    from minka.core.structured import unwrap
+
+    assert unwrap({"plan": {"agent": "a"}}) == {"agent": "a"}
+    assert unwrap({"agent": "a"}) == {"agent": "a"}
+    assert unwrap({"a": 1, "b": 2}) == {"a": 1, "b": 2}
+    client = _Client(_tool_use({"demo": {"agent": "a"}}))
+    result, error, retries, _ = _call(client)
+    assert result.agent == "a" and error is None and retries == 0 and client.calls == 1

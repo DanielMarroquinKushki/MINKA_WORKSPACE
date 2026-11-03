@@ -39,6 +39,7 @@ def test_evaluate_calcula_tasas_y_costo(monkeypatch):
     assert report["input_tokens"] == 4000 and report["output_tokens"] == 400
     assert report["cost_usd"] == round(4 * (1000 * 2.0 + 100 * 10.0) / 1e6, 4)
     assert report["per_case"][0]["agree"] == "1/2" and report["per_case"][1]["retries"] == 1
+    assert report["direct_without_planner"] == 2 and "sin planner en producción: 2/2" in routing_evals.format_report(report)
     texto = routing_evals.format_report(report)
     assert "empty_plan 25%" in texto and "acuerdo 25%" in texto and "errores {'validation': 1}" in texto
 

@@ -83,17 +83,14 @@
     {
       "id": "donde_se_resuelve",
       "request": "¿dónde se resuelve el cálculo de comisiones?",
-      "llm": [
-        "architecture_agent"
-      ],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "llm",
-        "llm_called": true,
+        "router": "info_direct",
+        "llm_called": false,
         "line_contains": [
-          "→ architecture (consulta de código)"
+          "→ architecture (consulta de información, directo)"
         ]
       },
       "eval": "info"
@@ -101,32 +98,30 @@
     {
       "id": "flujo",
       "request": "explica el flujo de autenticación desde el handler hasta la base de datos",
-      "llm": [
-        "architecture_agent"
-      ],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "llm",
-        "llm_called": true,
-        "confidence": "media"
+        "router": "info_direct",
+        "llm_called": false,
+        "line_contains": [
+          "→ architecture (consulta de información, directo)"
+        ]
       },
       "eval": "info"
     },
     {
       "id": "riesgos",
       "request": "detecta riesgos en el repo pagos",
-      "llm": [
-        "architecture_agent"
-      ],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "llm",
-        "llm_called": true,
-        "confidence": "alta"
+        "router": "info_direct",
+        "llm_called": false,
+        "line_contains": [
+          "→ architecture (consulta de información, directo)"
+        ]
       },
       "eval": "info"
     },
@@ -277,7 +272,7 @@
     },
     {
       "id": "negativo_report_sin_pedido",
-      "request": "¿qué cubre el módulo de pagos?",
+      "request": "resume qué cubre el módulo de pagos",
       "llm": [
         "report_agent"
       ],
@@ -347,7 +342,7 @@
     },
     {
       "id": "planner_llm_falla",
-      "request": "analiza las dependencias del módulo de pagos",
+      "request": "revisa los contratos del servicio de pagos",
       "llm": null,
       "expect": {
         "agents": [
@@ -573,15 +568,14 @@
     {
       "id": "info_donde_token",
       "request": "¿dónde se resuelve el token?",
-      "llm": [],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "no_plan",
-        "llm_called": true,
+        "router": "info_direct",
+        "llm_called": false,
         "line_contains": [
-          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+          "→ architecture (consulta de información, directo)"
         ]
       },
       "eval": "info"
@@ -589,15 +583,14 @@
     {
       "id": "info_como_valida_sesion",
       "request": "¿cómo se valida la sesión del usuario?",
-      "llm": [],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "no_plan",
-        "llm_called": true,
+        "router": "info_direct",
+        "llm_called": false,
         "line_contains": [
-          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+          "→ architecture (consulta de información, directo)"
         ]
       },
       "eval": "info"
@@ -605,15 +598,14 @@
     {
       "id": "info_que_hace_modulo",
       "request": "¿qué hace el módulo de notificaciones?",
-      "llm": [],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "no_plan",
-        "llm_called": true,
+        "router": "info_direct",
+        "llm_called": false,
         "line_contains": [
-          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+          "→ architecture (consulta de información, directo)"
         ]
       },
       "eval": "info"
@@ -621,15 +613,14 @@
     {
       "id": "info_por_que_reintenta",
       "request": "¿por qué el servicio de pagos reintenta tres veces?",
-      "llm": [],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "no_plan",
-        "llm_called": true,
+        "router": "info_direct",
+        "llm_called": false,
         "line_contains": [
-          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+          "→ architecture (consulta de información, directo)"
         ]
       },
       "eval": "info"
@@ -637,15 +628,14 @@
     {
       "id": "info_lista_endpoints",
       "request": "lista los endpoints públicos del servicio",
-      "llm": [],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "no_plan",
-        "llm_called": true,
+        "router": "info_direct",
+        "llm_called": false,
         "line_contains": [
-          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+          "→ architecture (consulta de información, directo)"
         ]
       },
       "eval": "info"
@@ -653,31 +643,14 @@
     {
       "id": "info_explica_persistencia",
       "request": "explica cómo se persiste la transacción",
-      "llm": [],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "no_plan",
-        "llm_called": true,
+        "router": "info_direct",
+        "llm_called": false,
         "line_contains": [
-          "→ architecture (pregunta de información) · planner: sin plan → architecture"
-        ]
-      },
-      "eval": "info"
-    },
-    {
-      "id": "info_muestra_timeout",
-      "request": "muestra dónde se configura el timeout",
-      "llm": [],
-      "expect": {
-        "agents": [
-          "architecture_agent"
-        ],
-        "router": "no_plan",
-        "llm_called": true,
-        "line_contains": [
-          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+          "→ architecture (consulta de información, directo)"
         ]
       },
       "eval": "info"
@@ -685,15 +658,14 @@
     {
       "id": "info_cuantos_consumidores",
       "request": "¿cuántos consumidores tiene la cola de eventos?",
-      "llm": [],
       "expect": {
         "agents": [
           "architecture_agent"
         ],
-        "router": "no_plan",
-        "llm_called": true,
+        "router": "info_direct",
+        "llm_called": false,
         "line_contains": [
-          "→ architecture (pregunta de información) · planner: sin plan → architecture"
+          "→ architecture (consulta de información, directo)"
         ]
       },
       "eval": "info"
@@ -724,6 +696,97 @@
         "line_contains": [
           "→ sin agente (planner: sin plan)"
         ]
+      }
+    },
+    {
+      "id": "encadenado_explica_y_luego_implementa",
+      "request": "explica el flujo de pagos y luego implementa la validación en internal/api/handler.go",
+      "llm": [
+        "architecture_agent",
+        "development_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent",
+          "development_agent"
+        ],
+        "router": "llm",
+        "llm_called": true,
+        "line_contains": [
+          "→ architecture → development (plan de 2 pasos)"
+        ]
+      }
+    },
+    {
+      "id": "encadenado_donde_despues_reporte",
+      "request": "¿dónde se valida el token? después genera un reporte",
+      "llm": [
+        "architecture_agent",
+        "report_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent",
+          "report_agent"
+        ],
+        "router": "llm",
+        "llm_called": true
+      }
+    },
+    {
+      "id": "encadenado_describe_y_ademas_revisa",
+      "request": "describe el módulo de pagos y además revisa el diff de la rama feature/login",
+      "llm": [
+        "architecture_agent",
+        "pr_review_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent",
+          "pr_review_agent"
+        ],
+        "router": "llm",
+        "llm_called": true
+      }
+    },
+    {
+      "id": "info_timeout_configurado_es_informacion",
+      "request": "muestra dónde se configura el timeout",
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "info_direct",
+        "llm_called": false
+      },
+      "eval": "info"
+    },
+    {
+      "id": "fallo_por_timeout_es_fallo",
+      "request": "¿por qué falla por timeout el handler de pagos.go?",
+      "llm": [
+        "debug_agent"
+      ],
+      "expect": {
+        "agents": [
+          "debug_agent"
+        ],
+        "router": "llm",
+        "llm_called": true
+      }
+    },
+    {
+      "id": "dos_preguntas_van_al_planner",
+      "request": "¿dónde se valida el token? ¿y cómo se renueva?",
+      "llm": [
+        "architecture_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true
       }
     }
   ]

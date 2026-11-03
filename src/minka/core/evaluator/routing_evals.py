@@ -9,8 +9,13 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from minka.config_loader import config
 from minka.core.orchestrator import planner
-from minka.core.orchestrator.router import CURRENT_REQUEST_MARKER, split_request
+from minka.core.orchestrator.router import (
+    CURRENT_REQUEST_MARKER,
+    is_simple_info_question,
+    split_request,
+)
 from minka.core.pricing import PRICING_VERSION, cost_usd
 
 MAX_CASES = 12
@@ -77,10 +82,13 @@ def evaluate(cases: list[dict], runs: int, runner=run_case) -> dict:
                 "retries": sum(r["retries"] for r in results),
             }
         )
+    direct = [c["id"] for c in cases if getattr(config, "PLANNER_SKIP_INFO", True) and is_simple_info_question(c["request"])]
     return {
         "cases": len(cases),
         "runs": runs,
         "calls": calls,
+        "direct_without_planner": len(direct),
+        "direct_ids": direct,
         "empty_plan_rate": outcomes["empty_plan"] / calls if calls else 0.0,
         "planner_errors": {k: v for k, v in outcomes.items() if k not in ("ok", "empty_plan")},
         "agreement_rate": agree / calls if calls else 0.0,
@@ -98,7 +106,8 @@ def format_report(report: dict) -> str:
         f"casos {report['cases']} × {report['runs']} corridas = {report['calls']} llamadas · "
         f"empty_plan {report['empty_plan_rate']:.0%} · acuerdo {report['agreement_rate']:.0%} · "
         f"estables {report['stability_rate']:.0%} · errores {report['planner_errors'] or 'ninguno'} · "
-        f"tokens {report['input_tokens']}/{report['output_tokens']} · ${report['cost_usd']:.4f}",
+        f"tokens {report['input_tokens']}/{report['output_tokens']} · ${report['cost_usd']:.4f} · "
+        f"sin planner en producción: {report['direct_without_planner']}/{report['cases']}",
     ]
     for c in report["per_case"]:
         agents = ", ".join((a or "—").removesuffix("_agent") for a in c["agents"])

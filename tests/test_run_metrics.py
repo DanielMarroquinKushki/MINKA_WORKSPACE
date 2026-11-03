@@ -41,6 +41,7 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(config, "ACTIVE_PROJECT", "demo", raising=False)
     monkeypatch.delenv(SOURCE_ENV, raising=False)
+    monkeypatch.setattr(config, "PLANNER_SKIP_INFO", False, raising=False)  # el test mide el plan por keywords
 
 
 def _orch(monkeypatch, fail=False):

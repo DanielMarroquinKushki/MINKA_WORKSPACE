@@ -65,10 +65,15 @@ _INFO_WORDS = (
     r"quien|lista|explica|muestra|describe|flujo|riesgos?|dependencias|arquitectura)\b"
 )
 _PRONOUNS = {"eso", "esto", "aquello", "ello", "lo", "entonces", "ahora", "ya", "y", "o", "de", "el", "la"}
+# Forma de error, no la palabra suelta: "configura el timeout" no es un fallo; "falla por
+# timeout", "da timeout" o "timed out" sí.
 _FAILURE = (
-    r"(stack ?trace|traceback|panic|\berror\b|excepcion|exception|\bfalla\b|\bfallo\b|"
-    r"no funciona|timeout|nil pointer|segfault|goroutine|\b5\d\d\b)"
+    r"(stack ?trace|traceback|panic|\berror(es)?\b|excepci[oó]n|exception|\bfalla[n]?\b|"
+    r"\bfall[oó]\b|no funciona|nil pointer|segfault|\b(por|da|dio|de) timeout\b|timed out|"
+    r"time out)"
 )
+# Encadenado: el pedido pide más de una cosa → planner (puede devolver varios pasos).
+_CHAIN_WORDS = r"\b(y luego|luego|despues|ademas|y tambien|y despues|y entonces|y a continuacion)\b"
 _DIFF = r"\b(diff|pull request|pr|mr|rama|branch|commit|merge|cambios propuestos)\b"
 _REPORT = r"\b(reporte|informe|documenta|documentar|documento|minuta|resumen ejecutivo)\b"
 _WRITE_VERBS = sorted(
@@ -179,6 +184,17 @@ def is_information_question(request: str) -> bool:
     rest = low[: m.start()] + low[m.end() :]
     content = [w for w in rest.split() if len(w) >= 4 and w not in _PRONOUNS]
     return bool(content)
+
+
+def is_simple_info_question(request: str) -> bool:
+    """Una sola pregunta de información, sin verbo de escritura, fallo ni encadenado:
+    se puede enrutar a architecture sin planner."""
+    low = _normalize(request)
+    if not is_information_question(request):
+        return False
+    if has_write_verb(request) or has_failure(request) or re.search(_CHAIN_WORDS, low):
+        return False
+    return request.count("?") <= 1 and request.count("¿") <= 1
 
 
 def is_ambiguous(request: str, repos: dict | None = None) -> bool:
@@ -325,6 +341,14 @@ def local_decision(
     if is_ambiguous(request, repos):
         return _fallback_decision(
             session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS
+        )
+    # Pregunta de información simple → architecture directo, sin planner (PLANNER_SKIP_INFO).
+    if getattr(config, "PLANNER_SKIP_INFO", True) and is_simple_info_question(request):
+        return RouteDecision(
+            "info_direct",
+            "consulta de información, directo",
+            agents=["architecture_agent"],
+            confidence="alta",
         )
     return None
 

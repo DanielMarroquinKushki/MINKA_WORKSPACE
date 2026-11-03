@@ -118,6 +118,9 @@ AUTONOMY_LEVEL = 3  # 3=requiere aprobación, 5=semi-autónomo, 6=autónomo
 DEBUG = False  # --debug en main.py lo activa: muestra input/output de cada tool
 QUIET = False  # --quiet en main.py: sin líneas de decisión, métricas ni avisos en stderr
 PROGRESS_ENABLED = True  # main.py lo apaga con --json-out; core/progress.py también exige TTY
+# Pregunta de información simple (sin verbo de escritura, fallo ni encadenado) →
+# architecture directo, sin planner: $0 de routing y 100% determinista.
+PLANNER_SKIP_INFO = os.getenv("PLANNER_SKIP_INFO", "true").strip().lower() in ("1", "true", "yes")
 # Veces que una misma tool con los mismos argumentos puede ejecutarse por corrida.
 TOOL_REPEAT_LIMIT = int(os.getenv("TOOL_REPEAT_LIMIT", "3"))
 AUTO_COMMIT = False  # True solo en Nivel 5+

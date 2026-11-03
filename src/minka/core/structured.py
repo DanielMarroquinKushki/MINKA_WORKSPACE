@@ -78,7 +78,7 @@ def call_structured_result(
     tool = {
         "name": tool_name,
         "description": tool_description,
-        "input_schema": schema_model.model_json_schema(),
+        "input_schema": tool_input_schema(schema_model),
     }
     retries = 0
     usage = {"model": model, "requests": 0, "input_tokens": 0, "output_tokens": 0,
@@ -106,7 +106,7 @@ def call_structured_result(
         for block in getattr(response, "content", []):
             if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
                 try:
-                    return schema_model.model_validate(block.input), None, retries, usage
+                    return schema_model.model_validate(unwrap(block.input)), None, retries, usage
                 except ValidationError as exc:
                     error = StructuredError("validation", "ValidationError", str(exc)[:200])
                     break
@@ -117,6 +117,29 @@ def call_structured_result(
             retries += 1
             continue
         return None, error, retries, usage
+
+
+def tool_input_schema(schema_model: type[BaseModel]) -> dict:
+    """JSON schema del modelo sin `title`/`description` de nivel superior.
+
+    Con ellos ("Plan", "Plan de ejecución…") el modelo anidaba la respuesta como
+    {"plan": {...}} y fallaba la validación (34/36 llamadas medidas el 2026-11-03).
+    La tool ya lleva su propio nombre y descripción.
+    """
+    schema = schema_model.model_json_schema()
+    schema.pop("title", None)
+    schema.pop("description", None)
+    return schema
+
+
+def unwrap(payload):
+    """Si el modelo envolvió la respuesta en una sola clave ({"plan": {...}}) devuelve el
+    interior; si no, el payload tal cual. Sin llamada extra al modelo."""
+    if isinstance(payload, dict) and len(payload) == 1:
+        inner = next(iter(payload.values()))
+        if isinstance(inner, dict):
+            return inner
+    return payload
 
 
 def _accumulate(usage: dict, response_usage) -> None:
