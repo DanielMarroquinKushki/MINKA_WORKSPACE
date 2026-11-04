@@ -937,6 +937,70 @@ def knowledge_check(
         raise typer.Exit(code=1)
 
 
+@knowledge_app.command(
+    "init",
+    help="Genera un borrador de knowledge (architecture.md + _sources.json) a partir del código, "
+    "sin modelo: árbol, módulos, imports, README, manifiesto y git log, con citas verificadas. "
+    "Escribe en output/knowledge_draft/<p>/ y muestra el diff; --apply lo copia sin sobrescribir.",
+)
+def knowledge_init(
+    project: str = typer.Option(None, "--project", help="Proyecto (default: el activo / por cwd)."),
+    apply: bool = typer.Option(False, "--apply", help="Copia el borrador a knowledge/extracted/ (pide confirmación)."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Con --apply: no pregunta."),
+):
+    import difflib
+
+    from minka.core.knowledge import extractor
+    from minka.core.tools.analysis import citations
+
+    _activate_project(project, quiet=True, required=True)
+    active = getattr(config, "ACTIVE_PROJECT", None)
+    try:
+        draft = extractor.build_draft(config, active)
+    except extractor.UnsupportedStack as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2)
+    except extractor.SecretFound as exc:
+        console.print(f"[red]{exc}[/red] Revisa y excluye antes de volver a correr:")
+        for hit in exc.hits[:50]:
+            console.print(f"  {hit}", markup=False)
+        if len(exc.hits) > 50:
+            console.print(f"  … y {len(exc.hits) - 50} más")
+        raise typer.Exit(code=3)
+
+    out_dir = Path(config.OUTPUT_DIR) / "knowledge_draft" / active
+    extractor.write_draft(draft, out_dir)
+    console.print(draft.report, markup=False)
+    console.print(f"Borrador en {out_dir} ({draft.files_scanned} archivos escaneados, 0 secretos).")
+
+    extracted = Path(config.PROJECTS_DIR) / active / "knowledge" / "extracted"
+    current = extracted / "architecture.md"
+    old = current.read_text(encoding="utf-8", errors="ignore").splitlines() if current.is_file() else []
+    diff = list(difflib.unified_diff(old, draft.architecture.splitlines(), "knowledge/extracted/architecture.md", "borrador", lineterm="", n=1))
+    if diff:
+        added = sum(1 for ln in diff if ln.startswith("+") and not ln.startswith("+++"))
+        removed = sum(1 for ln in diff if ln.startswith("-") and not ln.startswith("---"))
+        console.print(f"[dim]diff vs knowledge/extracted/architecture.md: +{added} −{removed} líneas"
+                      + ("" if current.is_file() else " (no existe todavía)") + "[/dim]")
+    if not apply:
+        console.print("[dim]Revisa el borrador; con --apply se copia a knowledge/extracted/ (nunca sobrescribe).[/dim]")
+        return
+
+    if not yes:
+        answer = console.input("¿Aplicar el borrador a knowledge/extracted/? [s/N]: ").strip().lower()
+        if answer not in ("s", "si", "sí", "y", "yes"):
+            console.print("Sin cambios.")
+            raise typer.Exit(code=0)
+    written = extractor.apply_draft(draft, extracted)
+    for name, target in written.items():
+        note = " (ya existía: se escribió como .new)" if target.name.endswith(".new") else ""
+        console.print(f"  escrito {target}{note}", markup=False)
+    results = citations.check_project(config, active)
+    console.print(citations.format_report(results), markup=False, soft_wrap=True)
+    if citations.broken(results):
+        raise typer.Exit(code=1)
+
+
 @app.command(
     "init",
     help="Onboarding guiado: crea el directorio de datos, config_local.py y .env (sin sobrescribir) "

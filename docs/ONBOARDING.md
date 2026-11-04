@@ -53,8 +53,14 @@ sin Markdown; `minka stats` muestra tokens, costo y la línea base (`prompt_hash
 3. **Contexto vivo**: `active-context/<p>.md` (lo crea `--new-project`, ~20 líneas máximo):
    ticket actual, alcance, bloqueo y próximo paso. Viaja al agente en cada consulta y
    responde "¿en qué quedamos?" sin gastar tokens.
-4. **Knowledge**: deja `knowledge/extracted/*.md` para lo que se derive del código real con
-   citas `archivo:línea`; `minka knowledge check --project <p>` avisa cuando queden rotas.
+4. **Knowledge**: `minka knowledge init --project <p>` genera un borrador determinista ($0, sin
+   modelo; stacks python y go) con árbol, módulos, imports internos, README, manifiesto y git
+   log, todo con citas `archivo:línea` verificadas o `[verificar]`. Escribe en
+   `output/knowledge_draft/<p>/` y muestra el diff; `--apply` lo copia a `knowledge/extracted/`
+   sin sobrescribir (si ya existe, deja `.new`). Antes de leer nada excluye `.env*`, `*.pem`,
+   `*.key`, credenciales, `vendor/`, `node_modules/`, `.venv/` y aborta si detecta patrones de
+   secretos, listando `ruta:línea` sin el valor. Luego `minka knowledge check --project <p>`
+   avisa cuando queden citas rotas.
 
 **Qué NO poner** en active-context, knowledge ni prompts: secretos, llaves privadas, tokens,
 API keys, PAN u otros datos de tarjeta, credenciales de SSO ni URLs internas con token. Todo
