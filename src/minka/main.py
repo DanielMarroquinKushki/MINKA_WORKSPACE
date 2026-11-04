@@ -206,6 +206,20 @@ def _print_status(turns: int) -> None:
     console.print(Panel("\n".join(lines), title="Estado del sistema", border_style="cyan"))
 
 
+def _require_rag_enabled() -> None:
+    """`--index-repos` / `--index-knowledge` sin RAG: mensaje claro y exit 1, nunca 'ok'."""
+    if getattr(config, "RAG_ENABLED", False):
+        return
+    project = getattr(config, "ACTIVE_PROJECT", None)
+    where = f"projects/{project}/config.py" if project else "config_local.py"
+    console.print(
+        f"[red]RAG desactivado: no se indexó nada.[/red] Pon [bold]RAG_ENABLED = True[/bold] en "
+        f"{where} (o en config_local.py) e instala el extra [rag] "
+        "(`uv tool install 'minka-workspace[rag] @ git+<url>'`); luego repite el comando."
+    )
+    raise typer.Exit(code=1)
+
+
 def _parse_repo_flags(flags: list[str]) -> dict[str, str]:
     repos: dict[str, str] = {}
     for item in flags:
@@ -240,7 +254,12 @@ def _ask_repos_interactive() -> dict[str, str]:
 
 
 def _new_project_flow(
-    name: str, stack: str | None, repo_flags: list[str], compliance_flags: list[str], yes: bool
+    name: str,
+    stack: str | None,
+    repo_flags: list[str],
+    compliance_flags: list[str],
+    yes: bool,
+    rag: bool | None = None,
 ) -> None:
     """`minka --new-project`: nombre, repos, STACK (detectado del primer repo), COMPLIANCE,
     creación, doctor del proyecto y siguientes pasos. Nunca sobrescribe un proyecto."""
@@ -290,6 +309,13 @@ def _new_project_flow(
         answer = console.input("[bold]¿Aplica PCI-DSS?[/bold] [s/N]: ").strip().lower()
         compliance = ["pci"] if answer in ("s", "si", "sí", "y", "yes") else []
 
+    if rag is None:
+        if yes:
+            rag = True
+        else:
+            answer = console.input("[bold]¿Activar búsqueda semántica (RAG)?[/bold] [S/n]: ").strip().lower()
+            rag = answer not in ("n", "no")
+
     core_module = None
     if stack == "go" and not yes:
         core_module = (
@@ -300,7 +326,9 @@ def _new_project_flow(
         )
 
     try:
-        result = create_project(name, core_module=core_module, stack=stack, compliance=compliance, repos=repos)
+        result = create_project(
+            name, core_module=core_module, stack=stack, compliance=compliance, repos=repos, rag=rag
+        )
     except (ProjectExistsError, InvalidProjectNameError, FileNotFoundError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
@@ -310,7 +338,8 @@ def _new_project_flow(
             f"[green]Proyecto '{result['name']}' creado.[/green]\n"
             f"Proyecto : {result['project_dir']}\n"
             f"Contexto : {result['active_context']}\n"
-            f"STACK    : {stack} · COMPLIANCE: {compliance or '[]'} · repos: {len(result['repos'])}"
+            f"STACK    : {stack} · COMPLIANCE: {compliance or '[]'} · RAG: {'sí' if rag else 'no'} "
+            f"· repos: {len(result['repos'])}"
             + (" (rutas relativas; REPOS_ROOT fijado en config_local.py)" if result["repos_root"] else ""),
             title="Nuevo proyecto",
             border_style="green",
@@ -424,6 +453,11 @@ def main(
     yes: bool = typer.Option(
         False, "--yes", "-y", help="--new-project: sin preguntas; usa flags y defaults."
     ),
+    rag: bool = typer.Option(
+        None,
+        "--rag/--no-rag",
+        help="--new-project: activa la búsqueda semántica (RAG_ENABLED) en el proyecto. Default: sí.",
+    ),
     evaluate: bool = typer.Option(
         False,
         "--evaluate",
@@ -486,33 +520,27 @@ def main(
         console.print("[dim]Modo debug: se muestra input/resultado de cada tool call.[/dim]")
 
     # Nivel 4 — indexado RAG (stub controlado por flag).
-    if index_repos:
-        if not config.RAG_ENABLED:
-            console.print(
-                "[yellow]RAG_ENABLED=False. Activa RAG en config e instala chromadb "
-                "antes de indexar. (Nivel 4 — pendiente)[/yellow]"
-            )
-            raise typer.Exit(code=0)
-        from minka.core.tools.rag.indexer import index_repos as _index
+    if index_repos or index_knowledge:
+        _require_rag_enabled()
+        from minka.core.tools.rag import indexer as _indexer
 
-        stats = _index(config)
+        if index_repos:
+            stats = _indexer.index_repos(config)
+            label = "Indexado de código"
+        else:
+            stats = _indexer.index_knowledge(config)
+            label = "Indexado de knowledge"
         console.print(stats)
-        console.print("[green]Indexado completado.[/green]")
-        raise typer.Exit(code=0)
-
-    # Nivel 4 — indexado de conocimiento (.md) en la colección knowledge_docs.
-    if index_knowledge:
-        if not config.RAG_ENABLED:
+        if stats.get("error"):
+            console.print(f"[red]{label} no se completó: {stats['error']}[/red]")
+            raise typer.Exit(code=1)
+        if stats.get("errors"):
             console.print(
-                "[yellow]RAG_ENABLED=False. Activa RAG en config e instala chromadb "
-                "antes de indexar. (Nivel 4 — pendiente)[/yellow]"
+                f"[yellow]{label} terminó con {stats['errors']} repo(s)/fuente(s) con error "
+                "(ver desglose).[/yellow]"
             )
-            raise typer.Exit(code=0)
-        from minka.core.tools.rag.indexer import index_knowledge as _index_knowledge
-
-        stats = _index_knowledge(config)
-        console.print(stats)
-        console.print("[green]Indexado de knowledge completado.[/green]")
+            raise typer.Exit(code=1)
+        console.print(f"[green]{label} completado.[/green]")
         raise typer.Exit(code=0)
 
     # Scaffolding — crea el esqueleto de un proyecto nuevo (Arnés Global).
@@ -535,6 +563,7 @@ def main(
             repo_flags=repo or [],
             compliance_flags=compliance or [],
             yes=yes,
+            rag=rag,
         )
         raise typer.Exit(code=0)
 

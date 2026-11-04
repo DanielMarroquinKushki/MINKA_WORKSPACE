@@ -161,6 +161,7 @@ def test_interactivo_pregunta_y_valida_rutas(world):
             "",  # fin de repos
             "",  # STACK: Enter = detectado (python)
             "s",  # PCI sí
+            "",  # RAG: Enter = sí
         ]
     ) + "\n"
     result = _run(["--new-project", "inter"], input=entrada)
@@ -171,7 +172,8 @@ def test_interactivo_pregunta_y_valida_rutas(world):
 
 
 def test_interactivo_go_pregunta_core_module(world):
-    entrada = "\n".join(["pos", str(world["repos"]["svc-go"]), "", "", "n", "svc-core"]) + "\n"
+    # repos → STACK (Enter = go) → PCI no → RAG (Enter = sí) → CORE_MODULE_NAME
+    entrada = "\n".join(["pos", str(world["repos"]["svc-go"]), "", "", "n", "", "svc-core"]) + "\n"
     result = _run(["--new-project", "gointer"], input=entrada)
     assert result.exit_code == 0, result.output
     text = _cfg(world, "gointer")
@@ -196,6 +198,47 @@ def test_placeholder_de_repos_root_se_reemplaza(world, monkeypatch):
     assert result.exit_code == 0, result.output
     assert str(world["repos"]["svc-py"]) in _cfg(world, "ph2")
     assert local.read_text(encoding="utf-8").count("REPOS_ROOT = ") == 1
+
+
+def test_rag_por_defecto_si_y_no_rag(world):
+    result = _run(["--new-project", "rag-si", "--repo", f"app={world['repos']['svc-py']}", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "RAG_ENABLED = True" in _cfg(world, "rag-si") and "--index-repos --project rag-si" in result.output
+    result = _run(["--new-project", "rag-no", "--repo", f"app={world['repos']['svc-py']}", "--yes", "--no-rag"])
+    assert result.exit_code == 0, result.output
+    assert "RAG_ENABLED = False" in _cfg(world, "rag-no")
+    assert "RAG desactivado" in result.output and "RAG_ENABLED = True" in result.output
+
+
+def test_rag_interactivo(world):
+    entrada = "\n".join(["app", str(world["repos"]["svc-py"]), "", "", "n", "n"]) + "\n"
+    result = _run(["--new-project", "rag-inter"], input=entrada)
+    assert result.exit_code == 0, result.output
+    assert "RAG_ENABLED = False" in _cfg(world, "rag-inter") and "RAG: no" in result.output
+    entrada = "\n".join(["app", str(world["repos"]["svc-py"]), "", "", "n", ""]) + "\n"  # Enter = sí
+    result = _run(["--new-project", "rag-default"], input=entrada)
+    assert result.exit_code == 0 and "RAG_ENABLED = True" in _cfg(world, "rag-default")
+
+
+def test_index_repos_con_rag_apagado_falla_claro(world, monkeypatch):
+    monkeypatch.setattr(config, "RAG_ENABLED", False, raising=False)
+    for flag in ("--index-repos", "--index-knowledge"):
+        result = _run([flag])
+        assert result.exit_code == 1, result.output
+        assert "RAG desactivado" in result.output and "RAG_ENABLED = True" in result.output
+        assert "completado" not in result.output and "Indexado" not in result.output
+
+
+def test_index_repos_reporta_error_del_indexer(world, monkeypatch):
+    monkeypatch.setattr(config, "RAG_ENABLED", True, raising=False)
+    from minka.core.tools.rag import indexer
+
+    monkeypatch.setattr(indexer, "index_repos", lambda cfg, only_changed=True: {"error": "sin chromadb"})
+    result = _run(["--index-repos"])
+    assert result.exit_code == 1 and "no se completó" in result.output and "completado." not in result.output
+    monkeypatch.setattr(indexer, "index_repos", lambda cfg, only_changed=True: {"files": 2, "chunks": 5, "errors": 0, "repos": {}})
+    result = _run(["--index-repos"])
+    assert result.exit_code == 0 and "Indexado de código completado" in result.output
 
 
 def test_create_project_sin_repos_mantiene_plantilla(world):

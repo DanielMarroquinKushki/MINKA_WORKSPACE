@@ -167,9 +167,18 @@ def write_project_settings(
     stack: str | None = None,
     compliance: list[str] | None = None,
     repos: dict[str, str] | None = None,
+    rag: bool | None = None,
 ) -> None:
-    """Escribe STACK, COMPLIANCE y REPOS en el config.py recién creado desde la plantilla."""
+    """Escribe STACK, COMPLIANCE, REPOS y RAG_ENABLED en el config.py recién creado."""
     text = config_path.read_text(encoding="utf-8")
+    if rag is not None:
+        line = f"RAG_ENABLED = {rag}"
+        text, n = re.subn(r"^# ?RAG_ENABLED = .*$|^RAG_ENABLED = .*$", line, text, count=1, flags=re.M)
+        if not n:
+            text += (
+                "\n# Búsqueda semántica del código (Nivel 4): requiere el extra [rag] y "
+                "`minka --index-repos`.\n" + line + "\n"
+            )
     if stack:
         text, n = re.subn(r'^# ?STACK = .*$', f'STACK = "{stack}"', text, count=1, flags=re.M)
         if not n:
@@ -213,6 +222,7 @@ def create_project(
     stack: str | None = None,
     compliance: list[str] | None = None,
     repos: dict[str, str] | None = None,
+    rag: bool | None = None,
 ) -> dict:
     """
     Crea el esqueleto de un proyecto nuevo desde projects/_template.
@@ -271,8 +281,8 @@ def create_project(
         repos_for_config, root_to_set = plan_repos(repos, getattr(config, "REPOS_ROOT", None))
         if root_to_set and ensure_repos_root(Path(config.DATA_DIR), root_to_set):
             root_set = root_to_set
-    if stack or compliance is not None or repos_for_config is not None:
-        write_project_settings(project_dir / "config.py", stack, compliance, repos_for_config)
+    if stack or compliance is not None or repos_for_config is not None or rag is not None:
+        write_project_settings(project_dir / "config.py", stack, compliance, repos_for_config, rag)
 
     steps = [
         f"Completa los parámetros en {project_dir / 'config.py'} "
@@ -283,7 +293,13 @@ def create_project(
             f"Declara los repos en {project_dir / 'config.py'} → REPOS (rutas relativas) y "
             f"REPOS_ROOT en {Path(config.DATA_DIR) / 'config_local.py'}."
         )
-    steps.append(f"Indexa el código: {config.APP_NAME} --index-repos --project {name}")
+    if rag is False:
+        steps.append(
+            f"RAG desactivado: para indexar, pon RAG_ENABLED = True en {project_dir / 'config.py'} "
+            f"y corre {config.APP_NAME} --index-repos --project {name}."
+        )
+    else:
+        steps.append(f"Indexa el código: {config.APP_NAME} --index-repos --project {name}")
     steps.append(f"Arranca: {config.APP_NAME} --project {name}")
     return {
         "name": name,
