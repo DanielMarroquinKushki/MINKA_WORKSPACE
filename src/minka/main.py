@@ -39,7 +39,6 @@ from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
 from minka.core import metrics
 from minka.core.orchestrator import router
-from minka.core.orchestrator.router import CURRENT_REQUEST_MARKER
 
 
 class _TaskOrCommandGroup(TyperGroup):
@@ -93,11 +92,6 @@ console = Console()
 # Línea final de métricas: stderr para no mezclarse con el resultado (stdout).
 stderr_console = Console(stderr=True)
 
-# Historial de sesión: cuántos turnos recientes se inyectan como contexto y
-# cuánto se trunca cada respuesta (mantiene el contexto acotado por turno).
-HISTORY_MAX_TURNS = 10
-HISTORY_RESULT_CHARS = 1500
-
 # Agentes delegables con --agent. Solo lectura a propósito: ninguno pasa por el
 # ApprovalGate, así que no se cuelgan esperando confirmación en stdin cuando el
 # proceso corre sin terminal (llamado desde otra herramienta).
@@ -120,18 +114,6 @@ def _make_orchestrator():
     from minka.core.orchestrator.orchestrator import Orchestrator
 
     return Orchestrator(config=config)
-
-
-def _history_context(history: list[tuple[str, str]]) -> str:
-    """Convierte el historial en un bloque de contexto para el orchestrator."""
-    if not history:
-        return ""
-    parts = ["Historial de esta sesión (contexto de turnos previos):"]
-    for i, (question, answer) in enumerate(history[-HISTORY_MAX_TURNS:], 1):
-        parts.append(f"\n[Turno {i}] Dev: {question}")
-        parts.append(f"[Turno {i}] Agente: {answer[:HISTORY_RESULT_CHARS]}")
-    parts.append(f"\n---\n\n{CURRENT_REQUEST_MARKER}")
-    return "\n".join(parts)
 
 
 def _write_json_out(
@@ -184,7 +166,7 @@ def _count_go_files(repo_path: str) -> int | None:
     return sum(1 for f in root.rglob("*.go") if "vendor" not in f.parts)
 
 
-def _print_status(history: list[tuple[str, str]]) -> None:
+def _print_status(turns: int) -> None:
     """Comando /status — estado del sistema."""
     if getattr(config, "USE_BEDROCK", False):
         token = config.get_aws_session().sso_token_status()
@@ -210,7 +192,7 @@ def _print_status(history: list[tuple[str, str]]) -> None:
         f" Sesión AWS : {aws_line}",
         f" Backend    : {backend_line}",
         f" Repos Go   : {' | '.join(repo_parts)}",
-        f" Memoria    : {len(history)} intercambios en sesión",
+        f" Memoria    : {turns} turnos en sesión",
         f" RAG        : {'activado' if config.RAG_ENABLED else 'desactivado (Nivel 4)'}",
         f" Nivel      : {config.AUTONOMY_LEVEL} — "
         + ("ApprovalGate activo" if config.AUTONOMY_LEVEL < 5 else "auto-aprobación"),
@@ -543,7 +525,6 @@ def main(
         return
 
     if interactive:
-        history: list[tuple[str, str]] = []
         console.print(
             "[dim]Escribe tu pedido en español. Comandos: /status, /clear, salir.[/dim]\n"
         )
@@ -556,10 +537,9 @@ def main(
                 if low in ("salir", "exit", "quit"):
                     break
                 if low == "/status":
-                    _print_status(history)
+                    _print_status(len(getattr(orchestrator, "memory", [])))
                     continue
                 if low == "/clear":
-                    history.clear()
                     orchestrator.clear_session()
                     console.print("[dim]Historial limpio.[/dim]")
                     continue
@@ -568,9 +548,8 @@ def main(
                         "[yellow]Comando desconocido. Disponibles: /status, /clear, salir.[/yellow]"
                     )
                     continue
-                task_text = f"{_history_context(history)}\n{user_input}" if history else user_input
-                result = orchestrator.run(task_text, use_llm_planner=not no_llm_planner)
-                history.append((user_input, result))
+                # El historial vive en orchestrator.memory: aquí solo viaja el pedido crudo.
+                result = orchestrator.run(user_input, use_llm_planner=not no_llm_planner)
                 console.print(f"\n{result}\n", markup=False)
                 _print_run_summary(orchestrator, quiet)
         except (KeyboardInterrupt, EOFError):

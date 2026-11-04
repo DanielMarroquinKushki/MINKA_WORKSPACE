@@ -50,6 +50,11 @@ class _FakeOrch:
         self.last_run_ok = True
         self.last_usage = {"per_agent": [USAGE_OPUS], "totals": USAGE_OPUS}
         self.last_run_record = _record("abc", "demo", [USAGE_OPUS])
+        self.memory = []
+        self.cleared = 0
+
+    def clear_session(self):
+        self.cleared += 1
 
     def run(self, task, **kwargs):
         self.runs.append(task)
@@ -148,3 +153,11 @@ def test_stats_con_datos_y_filtros(cli, tmp_path):
     assert "Sin corridas" in _invoke(["stats", "--day", "2026-01-05", "--source", "nadie"]).output
     assert "Sin corridas registradas para día 2026-01-06" in _invoke(["stats", "--day", "2026-01-06"]).output
     assert cli.runs == []
+
+
+def test_repl_manda_el_pedido_crudo_y_clear_limpia_la_memoria(cli):
+    result = _invoke([], input="analiza X\n/clear\n/status\nsalir\n")
+    assert result.exit_code == 0, result.output
+    assert cli.runs == ["analiza X"]  # sin bloque de historial antepuesto
+    assert cli.cleared == 1 and "Historial limpio" in result.output
+    assert "0 turnos en sesión" in result.output

@@ -95,7 +95,7 @@ def test_casos_cubren_los_12_tipos_y_son_genericos():
         "stack_trace", "implementar", "reporte", "ambiguo_sin_historial", "meta", "seguimiento_hereda",
     ):
         assert tipo in ids
-    assert len(CASES) >= 50
+    assert len(CASES) >= 52
     raw = json.dumps(CASES).lower()
     assert not any(w in raw for w in ("kushki", "credibanco", "amex", "usrv"))
 

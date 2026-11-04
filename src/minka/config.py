@@ -118,6 +118,10 @@ AUTONOMY_LEVEL = 3  # 3=requiere aprobación, 5=semi-autónomo, 6=autónomo
 DEBUG = False  # --debug en main.py lo activa: muestra input/output de cada tool
 QUIET = False  # --quiet en main.py: sin líneas de decisión, métricas ni avisos en stderr
 PROGRESS_ENABLED = True  # main.py lo apaga con --json-out; core/progress.py también exige TTY
+# Historial único de la sesión (core/memory/conversation_memory.py): turnos útiles que
+# viajan a cada agente como pares user/assistant y tope de chars del resultado guardado.
+HISTORY_MAX_TURNS = int(os.getenv("HISTORY_MAX_TURNS", "5"))
+HISTORY_RESULT_CHARS = int(os.getenv("HISTORY_RESULT_CHARS", "1500"))
 # Pregunta de información simple (sin verbo de escritura, fallo ni encadenado) →
 # architecture directo, sin planner: $0 de routing y 100% determinista.
 PLANNER_SKIP_INFO = os.getenv("PLANNER_SKIP_INFO", "true").strip().lower() in ("1", "true", "yes")

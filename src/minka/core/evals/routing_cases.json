@@ -827,6 +827,51 @@
         "router": "ambiguous",
         "llm_called": false
       }
+    },
+    {
+      "id": "arregla_eso_tras_consulta_util",
+      "request": "arregla eso",
+      "turns": [
+        {
+          "request": "¿dónde se valida el token?",
+          "agents": [
+            "architecture_agent"
+          ],
+          "useful": true,
+          "result": "El token se valida en internal/auth/token.go:42 dentro de validateToken()."
+        }
+      ],
+      "expect": {
+        "agents": [
+          "development_agent"
+        ],
+        "router": "followup_change",
+        "llm_called": false,
+        "line_contains": [
+          "→ development (cambio sobre el resultado previo, directo)"
+        ]
+      }
+    },
+    {
+      "id": "arregla_eso_tras_resultado_sin_citas",
+      "request": "arregla eso",
+      "turns": [
+        {
+          "request": "¿qué opinas del diseño?",
+          "agents": [
+            "architecture_agent"
+          ],
+          "useful": true,
+          "result": "El diseño separa handler, servicio y repositorio."
+        }
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "inherit",
+        "llm_called": false
+      }
     }
   ]
 }

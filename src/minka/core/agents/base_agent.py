@@ -118,7 +118,10 @@ class BaseAgent(ABC):
         self.name = name
         self.config = config
         self.client = self._build_client()
+        # SessionMemory queda sin uso: el historial lo pone el orquestador en
+        # `self.conversation` (ConversationMemory única, pares user/assistant).
         self.memory = SessionMemory(agent_name=name)
+        self.conversation: list[dict] = []
         self.vector_memory = VectorMemory(
             namespace=getattr(config, "ACTIVE_PROJECT", None) or "global"
         )
@@ -203,8 +206,8 @@ class BaseAgent(ABC):
             recalled = self._recall_memories(task)
             user_content = f"{recalled}\n\n{task}" if recalled else task
             # Copias: el marcador móvil de caché se pone sobre estos dicts, nunca sobre
-            # los que guarda SessionMemory.
-            messages = [dict(m) for m in self.memory.get_context()]
+            # los del historial compartido que el orquestador deja en self.conversation.
+            messages = [dict(m) for m in (getattr(self, "conversation", None) or [])]
             messages.append({"role": "user", "content": user_content})
             self.iteration_count = 0
             self.last_usage = self._empty_usage()
@@ -242,7 +245,6 @@ class BaseAgent(ABC):
 
                 # end_turn u otro → respuesta final
                 result = self._extract_text(response)
-                self.memory.add_exchange(task, result)
                 self._remember(task, result)
                 self._log(task, result)
                 return result

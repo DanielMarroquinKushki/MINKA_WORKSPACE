@@ -21,6 +21,7 @@ from rich.panel import Panel
 from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
 from minka.core import metrics
+from minka.core.memory.conversation_memory import ConversationMemory
 from minka.core.orchestrator import approval_gate, router
 from minka.core.orchestrator.state_manager import StateManager
 from minka.core.schemas import ReviewDecision
@@ -66,7 +67,11 @@ class Orchestrator:
         self.last_confidence: str | None = None
         self.last_decision: router.RouteDecision | None = None
         self.last_exit_code: int | None = None
-        self.session_turns: list[dict] = []
+        # Historial ÚNICO de la sesión, compartido por todos los agentes (solo en memoria).
+        self.memory = ConversationMemory(
+            max_turns=getattr(config, "HISTORY_MAX_TURNS", 5),
+            result_chars=getattr(config, "HISTORY_RESULT_CHARS", 1500),
+        )
         # Los fija main.py: --quiet apaga la línea de decisión (stderr);
         # --read-only (o MINKA_SOURCE=bridge) rechaza agentes que escriben.
         self.quiet: bool = False
@@ -74,12 +79,32 @@ class Orchestrator:
         self._stderr = Console(stderr=True)
 
     def clear_session(self) -> None:
-        """Olvida los turnos de la sesión (REPL /clear)."""
-        self.session_turns.clear()
+        """Olvida el historial de la sesión (REPL /clear)."""
+        self.memory.clear()
 
-    def _record_turn(self, request: str, agents: list[str], useful: bool) -> None:
-        """Todo turno cuenta (también los de $0): la herencia mira el inmediatamente anterior."""
-        self.session_turns.append({"request": request[:120], "agents": agents, "useful": useful})
+    @property
+    def session_turns(self) -> list[dict]:
+        """Vista para el router: pedido recortado, agentes, si fue útil y sus citas."""
+        return [
+            {
+                "request": t.request[:120],
+                "agents": list(t.agents),
+                "useful": t.useful,
+                "citations": list(t.citations),
+            }
+            for t in self.memory.turns
+        ]
+
+    @session_turns.setter
+    def session_turns(self, turns: list[dict]) -> None:
+        self.memory.clear()
+        for t in turns:
+            self.memory.add(t.get("request", ""), t.get("agents") or [], t.get("result", ""), t.get("useful", True))
+
+    def _record_turn(self, request: str, agents: list[str], useful: bool, result: str = "") -> None:
+        """Todo turno cuenta (también los de $0): la herencia mira el inmediatamente anterior.
+        El resultado se guarda recortado y sin cabeceras `### [agente]`."""
+        self.memory.add(request, agents, result, useful)
 
     def _get_agent(self, name: str):
         """Lazy-init de agentes: solo se crean cuando se usan (evita crear el
@@ -190,10 +215,11 @@ class Orchestrator:
         )
         self.last_plan = [name]
         self.state.reset()
+        agent.conversation = self.memory.as_messages()
         result = agent.run(task)
         self.state.record_step(name, task, result)
         self._record_usage(agent)
-        self._record_turn(request, [name], useful=router.is_useful_result(result))
+        self._record_turn(request, [name], router.is_useful_result(result), result)
         return result
 
     def run(
@@ -313,7 +339,11 @@ class Orchestrator:
             self.state.reset()
             if decision is None:  # capas 2 y 3: planner + reglas duras
                 decision = router.plan_decision(
-                    request, context, use_llm_planner, self.session_turns, repos
+                    request,
+                    context or self.memory.planner_context(),
+                    use_llm_planner,
+                    self.session_turns,
+                    repos,
                 )
             self._apply_decision(decision)
             if decision.reply is not None:  # planner sin plan: pide precisar
@@ -382,6 +412,7 @@ class Orchestrator:
                 prev = self.state.context_for_next()
                 task_with_ctx = f"{prev}\n\n---\n\nTarea: {step['task']}" if prev else step["task"]
 
+                agent.conversation = self.memory.as_messages()
                 result = agent.run(task_with_ctx)
                 self.state.record_step(step["agent"], step["task"], result)
                 self._record_usage(agent)
@@ -389,7 +420,9 @@ class Orchestrator:
             self._save_state(task, plan, results, i + 1, fix_loop_ran)
 
         self._clear_state()
-        self._record_turn(request, list(self.last_plan), useful=router.is_useful_result(result))
+        final = "\n\n".join(results)
+        # Se guarda la salida consolidada SIN cabeceras (las quita la memoria); se muestra con ellas.
+        self._record_turn(request, list(self.last_plan), router.is_useful_result(result), final)
 
         if getattr(config, "META_AGENT_ENABLED", False) and len(self.state.steps) >= 5:
             console.print(
@@ -397,7 +430,7 @@ class Orchestrator:
                 "para obtener análisis de performance.[/dim]"
             )
 
-        return "\n\n".join(results)
+        return final
 
     def _fix_loop(self, original_task: str, max_iterations: int = 3) -> str:
         """
@@ -414,6 +447,9 @@ class Orchestrator:
         pending_findings = []
         consecutive_fixes = 0
         max_usd = float(getattr(config, "FIX_LOOP_MAX_USD", 0) or 0)
+        # Los intentos previos de este mismo fix-loop viajan como historial intra-corrida.
+        base_history = self.memory.as_messages()
+        intra_history: list[dict] = []
 
         while iteration < max_iterations:
             iteration += 1
@@ -427,7 +463,12 @@ class Orchestrator:
 
             approval_gate.reset_request_count()
             dev_agent = self._get_agent("development_agent")
+            dev_agent.conversation = base_history + intra_history
             dev_result = dev_agent.run(dev_task)
+            intra_history += [
+                {"role": "user", "content": dev_task},
+                {"role": "assistant", "content": dev_result},
+            ]
             self.state.record_step("development_agent", dev_task, dev_result)
             self._record_usage(dev_agent)
 
@@ -468,6 +509,7 @@ class Orchestrator:
             else:
                 review_task = f"Revisa el último cambio aplicado. Contexto: {original_task}"
                 review_agent = self._get_agent("pr_review_agent")
+                review_agent.conversation = base_history
                 review_result = review_agent.run(review_task)
                 self.state.record_step("pr_review_agent", review_task, review_result)
                 self._record_usage(review_agent)

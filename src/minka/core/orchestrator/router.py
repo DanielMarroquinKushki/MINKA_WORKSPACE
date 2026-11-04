@@ -366,6 +366,23 @@ def local_decision(
         decision = review_decision(request, repos)
         if decision is not None:
             return decision
+    # "arregla eso" tras una consulta útil con citas: el código citado en el turno previo es
+    # la referencia; development lo recibe como historial.
+    last = session_turns[-1] if session_turns else None
+    if (
+        has_write_verb(request)
+        and not has_code_reference(request, repos)
+        and last is not None
+        and last.get("useful", True)
+        and last.get("citations")
+        and (last.get("agents") or [""])[-1] not in _NO_INHERIT
+    ):
+        return RouteDecision(
+            "followup_change",
+            "cambio sobre el resultado previo, directo",
+            agents=["development_agent"],
+            confidence="alta",
+        )
     if is_ambiguous(request, repos):
         return _fallback_decision(
             session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS
