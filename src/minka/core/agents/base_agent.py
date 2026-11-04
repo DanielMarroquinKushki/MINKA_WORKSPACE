@@ -30,6 +30,7 @@ from minka.core.knowledge.loader import KnowledgeLoader
 from minka.core.memory.session_memory import SessionMemory
 from minka.core.memory.vector_memory import VectorMemory
 from minka.core.observability import trace
+from minka.core.orchestrator import response_profile
 from minka.core.tools.registry import ToolRegistry, resolve_repo_paths
 
 console = Console()
@@ -122,6 +123,8 @@ class BaseAgent(ABC):
         # `self.conversation` (ConversationMemory única, pares user/assistant).
         self.memory = SessionMemory(agent_name=name)
         self.conversation: list[dict] = []
+        # Perfil de concisión de UN run (lo fija el orquestador; ver response_profile.py).
+        self.response_profile: str | None = None
         self.vector_memory = VectorMemory(
             namespace=getattr(config, "ACTIVE_PROJECT", None) or "global"
         )
@@ -205,6 +208,12 @@ class BaseAgent(ABC):
             self._progress = prog
             recalled = self._recall_memories(task)
             user_content = f"{recalled}\n\n{task}" if recalled else task
+            # Perfil breve: bloque al final del mensaje user, nunca en el system (el prefijo
+            # cacheado y la línea base de prompts quedan intactos). Un solo uso por run.
+            block = response_profile.user_block(getattr(self, "response_profile", None) or "")
+            self.response_profile = None
+            if block:
+                user_content = f"{user_content}\n\n{block}"
             # Copias: el marcador móvil de caché se pone sobre estos dicts, nunca sobre
             # los del historial compartido que el orquestador deja en self.conversation.
             messages = [dict(m) for m in (getattr(self, "conversation", None) or [])]

@@ -22,7 +22,7 @@ from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
 from minka.core import metrics
 from minka.core.memory.conversation_memory import ConversationMemory
-from minka.core.orchestrator import approval_gate, router
+from minka.core.orchestrator import approval_gate, response_profile, router
 from minka.core.orchestrator.state_manager import StateManager
 from minka.core.schemas import ReviewDecision
 
@@ -77,6 +77,12 @@ class Orchestrator:
         self.quiet: bool = False
         self.read_only: bool = False
         self._stderr = Console(stderr=True)
+        # Concisión por tipo de pedido (response_profile.py). force_full lo fijan
+        # --completo y --debug; los contadores del cierre van al registro de la corrida.
+        self.force_full: bool = False
+        self.last_profile: str = response_profile.PROFILE_FULL
+        self.last_ends_with_offer: bool = False
+        self.last_closings_removed: int = 0
 
     def clear_session(self) -> None:
         """Olvida el historial de la sesión (REPL /clear)."""
@@ -101,10 +107,16 @@ class Orchestrator:
         for t in turns:
             self.memory.add(t.get("request", ""), t.get("agents") or [], t.get("result", ""), t.get("useful", True))
 
-    def _record_turn(self, request: str, agents: list[str], useful: bool, result: str = "") -> None:
-        """Todo turno cuenta (también los de $0): la herencia mira el inmediatamente anterior.
-        El resultado se guarda recortado y sin cabeceras `### [agente]`."""
+    def _record_turn(self, request: str, agents: list[str], useful: bool, result: str = "") -> str:
+        """Gancho post-respuesta. Todo turno cuenta (también los de $0): la herencia mira
+        el inmediatamente anterior. Aquí se recorta el cierre "¿Quieres que…?" (una línea,
+        patrón cerrado, nunca con cita) y se guarda el resultado recortado y sin cabeceras
+        `### [agente]`. Devuelve el texto que debe mostrarse."""
+        result, offered, removed = response_profile.strip_closing_offer(result)
+        self.last_ends_with_offer = self.last_ends_with_offer or offered
+        self.last_closings_removed += removed
         self.memory.add(request, agents, result, useful)
+        return result
 
     def _get_agent(self, name: str):
         """Lazy-init de agentes: solo se crean cuando se usan (evita crear el
@@ -216,11 +228,13 @@ class Orchestrator:
         self.last_plan = [name]
         self.state.reset()
         agent.conversation = self.memory.as_messages()
+        # Forzado (--agent, bridge): siempre completo, sin perfil breve.
+        self.last_profile = response_profile.profile_for("forced", name, force_full=True)
+        agent.response_profile = self.last_profile
         result = agent.run(task)
         self.state.record_step(name, task, result)
         self._record_usage(agent)
-        self._record_turn(request, [name], router.is_useful_result(result), result)
-        return result
+        return self._record_turn(request, [name], router.is_useful_result(result), result)
 
     def run(
         self,
@@ -239,6 +253,9 @@ class Orchestrator:
         self.last_exit_code = None
         self.last_plan = []
         self.fix_loop_iters = 0
+        self.last_profile = response_profile.PROFILE_FULL
+        self.last_ends_with_offer = False
+        self.last_closings_removed = 0
         started = perf_counter()
         try:
             return self._run(task, use_llm_planner, resume, forced_agent)
@@ -270,6 +287,8 @@ class Orchestrator:
                 planner_error=getattr(self.last_decision, "planner_error", None),
                 reasoning=getattr(self.last_decision, "reasoning", None),
                 planner_retries=getattr(self.last_decision, "retries", 0),
+                ends_with_offer=self.last_ends_with_offer,
+                closings_removed=self.last_closings_removed,
             )
         except Exception:  # noqa: BLE001
             return {}
@@ -413,6 +432,14 @@ class Orchestrator:
                 task_with_ctx = f"{prev}\n\n---\n\nTarea: {step['task']}" if prev else step["task"]
 
                 agent.conversation = self.memory.as_messages()
+                # Perfil por tipo de pedido: info_direct → breve; lo demás completo.
+                # "en detalle"/"completo" en el pedido, --completo y --debug lo fuerzan.
+                self.last_profile = response_profile.profile_for(
+                    self.last_router,
+                    step["agent"],
+                    force_full=self.force_full or response_profile.wants_full(request),
+                )
+                agent.response_profile = self.last_profile
                 result = agent.run(task_with_ctx)
                 self.state.record_step(step["agent"], step["task"], result)
                 self._record_usage(agent)
@@ -422,7 +449,9 @@ class Orchestrator:
         self._clear_state()
         final = "\n\n".join(results)
         # Se guarda la salida consolidada SIN cabeceras (las quita la memoria); se muestra con ellas.
-        self._record_turn(request, list(self.last_plan), router.is_useful_result(result), final)
+        final = self._record_turn(request, list(self.last_plan), router.is_useful_result(result), final)
+        # La nota "respuesta acotada" es solo para mostrar: no va a la memoria ni al modelo.
+        final = response_profile.with_bounded_note(final, self.last_profile)
 
         if getattr(config, "META_AGENT_ENABLED", False) and len(self.state.steps) >= 5:
             console.print(

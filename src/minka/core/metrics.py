@@ -60,6 +60,8 @@ def build_run_record(
     planner_error: dict | None = None,
     reasoning: str | None = None,
     planner_retries: int = 0,
+    ends_with_offer: bool = False,
+    closings_removed: int = 0,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -91,6 +93,9 @@ def build_run_record(
         "repeated_tool_calls": sum(e["repeated_tool_calls"] for e in per_agent),
         "plan": list(plan),
         "fix_loop_iters": fix_loop_iters,
+        # Cierre "¿Quieres que…?": si la respuesta lo traía y cuántas líneas se recortaron.
+        "ends_with_offer": bool(ends_with_offer),
+        "closings_removed": int(closings_removed),
         "ok": ok,
         "duration_s": round(duration_s, 3),
         "tokens": {k: totals.get(k) or 0 for k in TOKEN_KEYS},
@@ -166,9 +171,12 @@ def aggregate(
     totals = dict.fromkeys(TOKEN_KEYS, 0)
     cost = base = duration = 0.0
     ok = fix_runs = fix_iters = repeated = 0
+    offers = closings = 0
     routers: Counter = Counter()
     for r in records:
         repeated += r.get("repeated_tool_calls") or 0
+        offers += 1 if r.get("ends_with_offer") else 0
+        closings += r.get("closings_removed") or 0
         for u in r.get("per_agent", []):
             name = _short(u.get("agent"))
             if agent and name != agent:
@@ -210,6 +218,8 @@ def aggregate(
         "fix_loop_runs": fix_runs,
         "fix_loop_iters": fix_iters,
         "repeated_tool_calls": repeated,
+        "ends_with_offer": offers,
+        "closings_removed": closings,
     }
 
 

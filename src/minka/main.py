@@ -240,6 +240,11 @@ def main(
     debug: bool = typer.Option(
         False, "--debug", help="Muestra input y resultado de cada tool call."
     ),
+    completo: bool = typer.Option(
+        False,
+        "--completo",
+        help="Fuerza la respuesta completa (sin el perfil breve de las consultas puntuales).",
+    ),
     index_repos: bool = typer.Option(
         False, "--index-repos", help="Nivel 4: indexar repos en ChromaDB (stub)."
     ),
@@ -487,6 +492,8 @@ def main(
     orchestrator.source = "cli" if task else "repl"
     orchestrator.quiet = quiet
     orchestrator.read_only = read_only or os.getenv(SOURCE_ENV) == "bridge"
+    # --completo y --debug apagan el perfil breve (ver core/orchestrator/response_profile.py).
+    orchestrator.force_full = completo or debug
     # Flags de runtime que leen los agentes (avisos en stderr, progreso en TTY).
     config.QUIET = quiet
     config.PROGRESS_ENABLED = json_out is None
@@ -625,7 +632,8 @@ def stats(
     console.print(
         f"[dim]router: {routers}     fix-loop: {agg['fix_loop_runs']} corrida(s), "
         f"{agg['fix_loop_iters']} iteraciones     tools repetidas bloqueadas: "
-        f"{agg['repeated_tool_calls']}[/dim]"
+        f"{agg['repeated_tool_calls']}     cierres recortados: {agg['closings_removed']} "
+        f"({agg['ends_with_offer']} respuestas con oferta)[/dim]"
     )
 
 
