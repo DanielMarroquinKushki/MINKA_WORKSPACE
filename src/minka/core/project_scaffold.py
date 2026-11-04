@@ -117,15 +117,111 @@ def apply_init_answers(
     return touched
 
 
+STACKS = ("go", "python", "node")
+_STACK_MARKERS = (
+    ("go.mod", "go"),
+    ("pyproject.toml", "python"),
+    ("setup.py", "python"),
+    ("requirements.txt", "python"),
+    ("package.json", "node"),
+)
+
+
+def detect_stack(repo_path: str | Path) -> str | None:
+    """Stack según los archivos del repo (go.mod → go, pyproject/setup/requirements → python,
+    package.json → node). None si no hay marcador."""
+    root = Path(repo_path).expanduser()
+    for marker, stack in _STACK_MARKERS:
+        if (root / marker).is_file():
+            return stack
+    return None
+
+
+def plan_repos(repos: dict[str, str], repos_root: str | None) -> tuple[dict[str, str], str | None]:
+    """Decide cómo escribir REPOS en el proyecto.
+
+    Devuelve (repos_para_config, repos_root_a_fijar):
+    - Si todos los repos comparten carpeta y config_local no tiene REPOS_ROOT → rutas
+      relativas y esa carpeta como REPOS_ROOT a escribir en config_local.
+    - Si comparten carpeta y coincide con el REPOS_ROOT ya configurado → relativas, nada que fijar.
+    - En cualquier otro caso → rutas absolutas, nada que fijar.
+    """
+    absolute = {alias: str(Path(p).expanduser().resolve()) for alias, p in repos.items()}
+    parents = {str(Path(p).parent) for p in absolute.values()}
+    if len(parents) != 1:
+        return absolute, None
+    common = parents.pop()
+    configured = None
+    if repos_root and Path(repos_root).expanduser().is_dir():
+        configured = str(Path(repos_root).expanduser().resolve())
+    # Sin REPOS_ROOT, o con el placeholder de la plantilla (carpeta inexistente): se fija aquí.
+    if configured is None:
+        return {a: Path(p).name for a, p in absolute.items()}, common
+    if configured == common:
+        return {a: Path(p).name for a, p in absolute.items()}, None
+    return absolute, None
+
+
+def write_project_settings(
+    config_path: Path,
+    stack: str | None = None,
+    compliance: list[str] | None = None,
+    repos: dict[str, str] | None = None,
+) -> None:
+    """Escribe STACK, COMPLIANCE y REPOS en el config.py recién creado desde la plantilla."""
+    text = config_path.read_text(encoding="utf-8")
+    if stack:
+        text, n = re.subn(r'^# ?STACK = .*$', f'STACK = "{stack}"', text, count=1, flags=re.M)
+        if not n:
+            text += f'\nSTACK = "{stack}"\n'
+    if compliance is not None:
+        value = "[" + ", ".join(f'"{c}"' for c in compliance) + "]"
+        text, n = re.subn(r'^# ?COMPLIANCE = .*$', f"COMPLIANCE = {value}", text, count=1, flags=re.M)
+        if not n:
+            text += f"\nCOMPLIANCE = {value}\n"
+    if repos is not None:
+        block = "REPOS = {\n" + "".join(f"    {a!r}: {p!r},\n" for a, p in repos.items()) + "}"
+        text, n = re.subn(r"^REPOS = \{.*?^\}", block, text, count=1, flags=re.M | re.S)
+        if not n:
+            text += f"\n{block}\n"
+    config_path.write_text(text, encoding="utf-8")
+
+
+def ensure_repos_root(data_dir: Path, repos_root: str) -> bool:
+    """Añade REPOS_ROOT a <data_dir>/config_local.py si no lo define. True si lo escribió."""
+    local = data_dir / "config_local.py"
+    text = local.read_text(encoding="utf-8") if local.is_file() else ""
+    current = re.search(r'^REPOS_ROOT\s*=\s*["\'](.*)["\']\s*$', text, re.M)
+    if current:
+        if Path(current.group(1)).expanduser().is_dir():
+            return False  # ya hay una raíz real: no se toca
+        # Placeholder de la plantilla (carpeta inexistente): se reemplaza en su línea.
+        text = text[: current.start()] + f"REPOS_ROOT = {repos_root!r}" + text[current.end() :]
+        local.write_text(text, encoding="utf-8")
+        return True
+    if re.search(r"^REPOS_ROOT\s*=", text, re.M):
+        return False
+    data_dir.mkdir(parents=True, exist_ok=True)
+    sep = "" if (not text or text.endswith("\n")) else "\n"
+    local.write_text(text + f'{sep}\n# Carpeta donde viven los repos del proyecto (rutas relativas de REPOS).\nREPOS_ROOT = {repos_root!r}\n', encoding="utf-8")
+    return True
+
+
 def create_project(
     name: str,
     core_module: str | None = None,
+    stack: str | None = None,
+    compliance: list[str] | None = None,
+    repos: dict[str, str] | None = None,
 ) -> dict:
     """
     Crea el esqueleto de un proyecto nuevo desde projects/_template.
-    Devuelve dict con name, project_dir, active_context, next_steps.
+    Devuelve dict con name, project_dir, active_context, next_steps, stack, repos y
+    repos_root (carpeta que quedó fijada en config_local, o None).
     No imprime ni pregunta nada (capa pura, testeable).
     """
+    if stack is not None and stack not in STACKS:
+        raise InvalidProjectNameError(f"STACK inválido: '{stack}'. Opciones: {', '.join(STACKS)}.")
     if not name or not _NAME_RE.match(name):
         raise InvalidProjectNameError(
             f"Nombre inválido: '{name}'. Usa kebab-case (ej: mi-proyecto)."
@@ -168,17 +264,36 @@ def create_project(
     if core_module:
         _set_core_module(project_dir / "config.py", core_module)
 
+    # 5. STACK, COMPLIANCE y REPOS (relativas a REPOS_ROOT si todos comparten carpeta).
+    repos_for_config: dict[str, str] | None = None
+    root_set: str | None = None
+    if repos:
+        repos_for_config, root_to_set = plan_repos(repos, getattr(config, "REPOS_ROOT", None))
+        if root_to_set and ensure_repos_root(Path(config.DATA_DIR), root_to_set):
+            root_set = root_to_set
+    if stack or compliance is not None or repos_for_config is not None:
+        write_project_settings(project_dir / "config.py", stack, compliance, repos_for_config)
+
+    steps = [
+        f"Completa los parámetros en {project_dir / 'config.py'} "
+        "(CORE_MODULE_NAME, PR_CHECKLIST, AGENT_KNOWLEDGE, AGENT_TOOLS)."
+    ]
+    if not repos:
+        steps.append(
+            f"Declara los repos en {project_dir / 'config.py'} → REPOS (rutas relativas) y "
+            f"REPOS_ROOT en {Path(config.DATA_DIR) / 'config_local.py'}."
+        )
+    steps.append(f"Indexa el código: {config.APP_NAME} --index-repos --project {name}")
+    steps.append(f"Arranca: {config.APP_NAME} --project {name}")
     return {
         "name": name,
         "project_dir": str(project_dir),
         "active_context": str(active_context),
-        "next_steps": [
-            f"Completa los parámetros en {project_dir / 'config.py'} "
-            "(CORE_MODULE_NAME, PR_CHECKLIST, AGENT_KNOWLEDGE, AGENT_TOOLS).",
-            f"Declara los repos en {project_dir / 'config.py'} → REPOS (rutas relativas) y "
-            f"REPOS_ROOT en {Path(config.DATA_DIR) / 'config_local.py'}.",
-            f"Arranca: {config.APP_NAME} --project {name}",
-        ],
+        "stack": stack,
+        "compliance": compliance,
+        "repos": repos_for_config or {},
+        "repos_root": root_set,
+        "next_steps": steps,
     }
 
 

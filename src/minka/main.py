@@ -206,6 +206,133 @@ def _print_status(turns: int) -> None:
     console.print(Panel("\n".join(lines), title="Estado del sistema", border_style="cyan"))
 
 
+def _parse_repo_flags(flags: list[str]) -> dict[str, str]:
+    repos: dict[str, str] = {}
+    for item in flags:
+        alias, sep, path = item.partition("=")
+        if not sep or not alias.strip() or not path.strip():
+            console.print(f"[red]--repo espera alias=ruta, recibí: {item!r}[/red]")
+            raise typer.Exit(code=2)
+        repos[alias.strip()] = path.strip()
+    return repos
+
+
+def _ask_repos_interactive() -> dict[str, str]:
+    console.print(
+        "\n[bold]Repos del proyecto[/bold] (alias y ruta absoluta; Enter en el alias para terminar)"
+    )
+    repos: dict[str, str] = {}
+    while True:
+        alias = console.input("  alias: ").strip()
+        if not alias:
+            if repos:
+                return repos
+            console.print("  [yellow]Hace falta al menos un repo.[/yellow]")
+            continue
+        while True:
+            path = console.input(f"  ruta de {alias}: ").strip()
+            if not path:
+                break
+            if Path(path).expanduser().is_dir():
+                repos[alias] = path
+                break
+            console.print("  [yellow]esa ruta no existe; vuelve a escribirla (Enter para cancelar el alias).[/yellow]")
+
+
+def _new_project_flow(
+    name: str, stack: str | None, repo_flags: list[str], compliance_flags: list[str], yes: bool
+) -> None:
+    """`minka --new-project`: nombre, repos, STACK (detectado del primer repo), COMPLIANCE,
+    creación, doctor del proyecto y siguientes pasos. Nunca sobrescribe un proyecto."""
+    from minka.core import doctor
+    from minka.core.project_scaffold import (
+        STACKS,
+        InvalidProjectNameError,
+        ProjectExistsError,
+        create_project,
+        detect_stack,
+    )
+
+    if not name:
+        if yes:
+            console.print("[red]--new-project necesita el nombre del proyecto con --yes.[/red]")
+            raise typer.Exit(code=2)
+        name = console.input("[bold]Nombre del proyecto[/bold] (kebab-case, ej: mi-proyecto): ").strip()
+
+    projects_dir = Path(getattr(config, "PROJECTS_DIR", Path(config.DATA_DIR) / "projects"))
+    if (projects_dir / name).exists():
+        console.print(f"[red]El proyecto '{name}' ya existe en {projects_dir / name}. No se toca nada.[/red]")
+        raise typer.Exit(code=1)
+
+    repos = _parse_repo_flags(repo_flags)
+    for alias, path in repos.items():
+        if not Path(path).expanduser().is_dir():
+            console.print(f"[red]La ruta del repo '{alias}' no existe. Nada creado.[/red]")
+            raise typer.Exit(code=2)
+    if not repos and not yes:
+        repos = _ask_repos_interactive()
+
+    detected = detect_stack(next(iter(repos.values()))) if repos else None
+    if stack is None:
+        default = detected or "go"
+        if yes:
+            stack = default
+        else:
+            hint = f" (detectado: {detected})" if detected else ""
+            answer = console.input(f"\n[bold]STACK[/bold] [go/python/node]{hint} (Enter = {default}): ").strip().lower()
+            stack = answer or default
+    if stack not in STACKS:
+        console.print(f"[red]STACK inválido: '{stack}'. Opciones: {', '.join(STACKS)}.[/red]")
+        raise typer.Exit(code=2)
+
+    compliance = [c.strip().lower() for c in compliance_flags if c.strip()]
+    if not compliance and not yes:
+        answer = console.input("[bold]¿Aplica PCI-DSS?[/bold] [s/N]: ").strip().lower()
+        compliance = ["pci"] if answer in ("s", "si", "sí", "y", "yes") else []
+
+    core_module = None
+    if stack == "go" and not yes:
+        core_module = (
+            console.input(
+                "[dim]CORE_MODULE_NAME (módulo core compartido; Enter para dejar placeholder): [/dim]"
+            ).strip()
+            or None
+        )
+
+    try:
+        result = create_project(name, core_module=core_module, stack=stack, compliance=compliance, repos=repos)
+    except (ProjectExistsError, InvalidProjectNameError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(
+        Panel(
+            f"[green]Proyecto '{result['name']}' creado.[/green]\n"
+            f"Proyecto : {result['project_dir']}\n"
+            f"Contexto : {result['active_context']}\n"
+            f"STACK    : {stack} · COMPLIANCE: {compliance or '[]'} · repos: {len(result['repos'])}"
+            + (" (rutas relativas; REPOS_ROOT fijado en config_local.py)" if result["repos_root"] else ""),
+            title="Nuevo proyecto",
+            border_style="green",
+        )
+    )
+
+    # Doctor del proyecto recién creado: solo ✓/✗ y qué hacer.
+    from minka.config_loader import set_project
+
+    try:
+        set_project(result["name"])
+        checks = doctor.run_checks(config)
+        console.print(doctor.format_report(checks), markup=False, highlight=False)
+    except Exception as exc:  # noqa: BLE001 — el doctor es informativo, no bloquea la creación
+        console.print(f"[yellow]No se pudo correr el doctor: {exc}[/yellow]")
+
+    console.print("\n[bold]Siguiente paso:[/bold]")
+    for i, step in enumerate(result["next_steps"], 1):
+        console.print(f"  {i}. {step}", markup=False)
+    console.print(f"\n[dim]La próxima sesión detectará '{result['name']}' automáticamente.[/dim]")
+
+
 def _print_run_summary(orchestrator, quiet: bool) -> None:
     """Línea final de la corrida en stderr (tokens, cache, costo, tiempo, agentes)."""
     if quiet or os.getenv(QUIET_ENV):
@@ -282,7 +409,20 @@ def main(
     new_project: bool = typer.Option(
         False,
         "--new-project",
-        help="Crea el esqueleto de un proyecto nuevo (nombre como argumento o interactivo) y sale.",
+        help="Crea un proyecto nuevo (nombre como argumento o interactivo): pregunta STACK, "
+        "COMPLIANCE y repos, corre el doctor y sale. Con --repo/--stack/--yes no pregunta.",
+    ),
+    stack: str = typer.Option(
+        None, "--stack", help="--new-project: go | python | node (default: detectado del primer repo)."
+    ),
+    repo: list[str] = typer.Option(
+        None, "--repo", help="--new-project: alias=ruta del repo (repetible). La ruta debe existir."
+    ),
+    compliance: list[str] = typer.Option(
+        None, "--compliance", help="--new-project: cumplimiento opcional, p. ej. pci (repetible)."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="--new-project: sin preguntas; usa flags y defaults."
     ),
     evaluate: bool = typer.Option(
         False,
@@ -389,42 +529,12 @@ def main(
         return
 
     if new_project:
-        from minka.core.project_scaffold import (
-            InvalidProjectNameError,
-            ProjectExistsError,
-            create_project,
-        )
-
-        name = (task or "").strip()
-        if not name:
-            name = console.input(
-                "[bold]Nombre del proyecto[/bold] (kebab-case, ej: mi-proyecto): "
-            ).strip()
-        core_module = (
-            console.input(
-                "[dim]CORE_MODULE_NAME (módulo core compartido; Enter para dejar placeholder): [/dim]"
-            ).strip()
-            or None
-        )
-        try:
-            result = create_project(name, core_module=core_module)
-        except (ProjectExistsError, InvalidProjectNameError, FileNotFoundError) as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1)
-        console.print(
-            Panel(
-                f"[green]Proyecto '{result['name']}' creado.[/green]\n"
-                f"Proyecto : {result['project_dir']}\n"
-                f"Contexto : {result['active_context']}",
-                title="Nuevo proyecto",
-                border_style="green",
-            )
-        )
-        console.print("[bold]Próximos pasos (rutas de tu máquina):[/bold]")
-        for i, step in enumerate(result["next_steps"], 1):
-            console.print(f"  {i}. {step}")
-        console.print(
-            f"\n[dim]La próxima sesión detectará '{result['name']}' automáticamente.[/dim]"
+        _new_project_flow(
+            name=(task or "").strip(),
+            stack=stack,
+            repo_flags=repo or [],
+            compliance_flags=compliance or [],
+            yes=yes,
         )
         raise typer.Exit(code=0)
 

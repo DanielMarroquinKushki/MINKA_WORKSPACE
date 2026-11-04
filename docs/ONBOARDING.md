@@ -10,44 +10,48 @@ equipo guarda `projects/` y `active-context/` en un workspace compartido, export
 
 ---
 
-## Usuario nuevo en 6 pasos
+## Usuario nuevo: 4 comandos
 
-1. **Instala** (requiere Python ≥ 3.12 y uv):
-   ```bash
-   uv tool install git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE
-   # con búsqueda semántica (RAG):
-   uv tool install 'minka-workspace[rag] @ git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE'
-   ```
-2. **Crea tu configuración** con el asistente. Pregunta los alias y rutas de tus repos y
-   el backend (Bedrock por SSO o API directa); solo escribe en archivos nuevos y nunca
-   muestra lo que tecleas:
-   ```bash
-   minka init
-   ```
-   Si ya tenías `config_local.py` o `.env`, no los toca: edítalos a mano.
-3. **Autentícate.** Bedrock: `minka-sso` (crea o verifica el perfil, abre el browser).
-   API directa: pon `ANTHROPIC_API_KEY` en `<DATA_DIR>/.env` y `LLM_BACKEND=anthropic`.
-4. **Diagnostica** antes de la primera corrida:
-   ```bash
-   minka doctor
-   ```
-   Cada línea sale con ✓ o ✗ y qué hacer. Los ✗ bloqueantes (Python, sesión, REPOS,
-   proyecto) dan exit 1; chromadb y el contexto vivo solo avisan.
-5. **Crea tu primer proyecto** (nombre en kebab-case):
-   ```bash
-   minka --new-project mi-proyecto
-   ```
-   Genera `projects/mi-proyecto/` (config, prompts, knowledge) y el contexto vivo
-   `active-context/mi-proyecto.md` en `ACTIVE_CONTEXT_DIR`. Completa `config.py` del
-   proyecto y pon `DEFAULT_PROJECT = "mi-proyecto"` en `config_local.py`.
-6. **Primera consulta:**
-   ```bash
-   minka "¿dónde se resuelve el token en el repo <alias>?"
-   minka                       # modo interactivo; /status, /clear, salir
-   ```
-   Las consultas puntuales salen breves con citas `archivo:línea`; pide "en detalle" o
-   usa `--completo` para la versión larga. `--plain` (o `MINKA_PLAIN=1`) imprime sin
-   Markdown. `minka stats` muestra tokens, costo y la línea base (`prompt_hash`).
+```bash
+# 1. Instalar (Python ≥ 3.12 y uv). Con búsqueda semántica: 'minka-workspace[rag] @ git+…'
+uv tool install git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE
+
+# 2. Configuración personal (directorio de datos, config_local.py, .env, backend). No sobrescribe.
+minka init
+
+# 3. Proyecto: detecta el stack del primer repo (go.mod / pyproject.toml / package.json),
+#    escribe STACK, COMPLIANCE y REPOS en projects/<p>/config.py, corre el doctor y sale.
+minka --new-project mi-proyecto --repo api=~/code/svc-api --repo core=~/code/svc-core
+#    interactivo (pregunta repos, stack y si aplica PCI):  minka --new-project mi-proyecto
+#    sin preguntas para scripts:  … --stack python --compliance pci --yes
+
+# 4. Verificar y empezar
+minka doctor --project mi-proyecto
+minka --project mi-proyecto "¿dónde se resuelve el token en el repo api?"
+```
+
+Notas: Bedrock requiere `minka-sso` una vez (perfil SSO); API directa, `ANTHROPIC_API_KEY`
+en `<DATA_DIR>/.env` y `LLM_BACKEND=anthropic`. Si todos los repos comparten carpeta,
+`--new-project` los deja relativos y fija `REPOS_ROOT` en `config_local.py`; si no, quedan
+absolutos. Nunca sobrescribe un proyecto existente. Las consultas puntuales salen breves con
+citas `archivo:línea` ("en detalle" o `--completo` para la versión larga); `--plain` imprime
+sin Markdown; `minka stats` muestra tokens, costo y la línea base (`prompt_hash`).
+
+## Cargar contexto (lo mínimo para que el agente vea tu código)
+
+1. **REPOS** declarados en `projects/<p>/config.py` (los crea `--new-project`); `minka doctor`
+   debe mostrar `Repos n/n`.
+2. **Índice de código**: `minka --index-repos --project <p>` (requiere `RAG_ENABLED = True` y el
+   extra `[rag]`). Incremental: solo reindexa lo que cambió; repítelo tras cambios grandes.
+3. **Contexto vivo**: `active-context/<p>.md` (lo crea `--new-project`, ~20 líneas máximo):
+   ticket actual, alcance, bloqueo y próximo paso. Viaja al agente en cada consulta y
+   responde "¿en qué quedamos?" sin gastar tokens.
+4. **Knowledge**: deja `knowledge/extracted/*.md` para lo que se derive del código real con
+   citas `archivo:línea`; `minka knowledge check --project <p>` avisa cuando queden rotas.
+
+**Qué NO poner** en active-context, knowledge ni prompts: secretos, llaves privadas, tokens,
+API keys, PAN u otros datos de tarjeta, credenciales de SSO ni URLs internas con token. Todo
+eso viaja al modelo; las rutas de repos y los nombres de archivo sí son necesarios.
 
 ---
 
