@@ -64,6 +64,7 @@ def build_run_record(
     closings_removed: int = 0,
     citations_total: int = 0,
     citations_missing: int = 0,
+    prompt_hash: str | None = None,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -101,6 +102,8 @@ def build_run_record(
         # Citas archivo:línea de la respuesta verificadas contra REPOS (citation_check.py).
         "citations_total": int(citations_total),
         "citations_missing": int(citations_missing),
+        # Huella de prompts + tools + modelos (core/baseline.py): misma línea base ⇔ mismo hash.
+        "prompt_hash": prompt_hash,
         "ok": ok,
         "duration_s": round(duration_s, 3),
         "tokens": {k: totals.get(k) or 0 for k in TOKEN_KEYS},
@@ -178,8 +181,11 @@ def aggregate(
     ok = fix_runs = fix_iters = repeated = 0
     offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
+    prompt_hashes: Counter = Counter()
     for r in records:
         repeated += r.get("repeated_tool_calls") or 0
+        if r.get("prompt_hash"):
+            prompt_hashes[r["prompt_hash"]] += 1
         offers += 1 if r.get("ends_with_offer") else 0
         closings += r.get("closings_removed") or 0
         cit_total += r.get("citations_total") or 0
@@ -229,6 +235,7 @@ def aggregate(
         "closings_removed": closings,
         "citations_total": cit_total,
         "citations_missing": cit_missing,
+        "prompt_hashes": dict(prompt_hashes),
     }
 
 

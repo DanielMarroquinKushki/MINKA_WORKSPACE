@@ -1,4 +1,4 @@
-# Plantilla de proyecto — kushki-workspace
+# Plantilla de proyecto — minka (dev-agent)
 
 Guía para crear un proyecto nuevo en 6 pasos.
 Al terminar tendrás el agente funcionando con tus repos.

@@ -32,7 +32,7 @@ PAYMENTS_GO = "\n".join(
 
 @pytest.fixture
 def repos(tmp_path: Path) -> dict[str, Path]:
-    pagos = tmp_path / "real" / "usrv-pagos"
+    pagos = tmp_path / "real" / "svc-pagos"
     (pagos / "service").mkdir(parents=True)
     (pagos / "tool").mkdir()
     (pagos / "vendor" / "x").mkdir(parents=True)
@@ -40,7 +40,7 @@ def repos(tmp_path: Path) -> dict[str, Path]:
     (pagos / "tool" / "common.go").write_text("package tool\n", encoding="utf-8")
     (pagos / "vendor" / "x" / "common.go").write_text("package x\n", encoding="utf-8")
 
-    ledger = tmp_path / "real" / "usrv-ledger"
+    ledger = tmp_path / "real" / "svc-ledger"
     (ledger / "tool").mkdir(parents=True)
     (ledger / "tool" / "common.go").write_text("package tool\n", encoding="utf-8")
     (ledger / "serverless.yml").write_text("functions:\n  a: 1\n", encoding="utf-8")
@@ -51,8 +51,8 @@ def repos(tmp_path: Path) -> dict[str, Path]:
 
     links = tmp_path / "links"
     links.mkdir()
-    (links / "usrv-pagos").symlink_to(pagos)
-    return {"pagos": links / "usrv-pagos", "ledger": ledger}
+    (links / "svc-pagos").symlink_to(pagos)
+    return {"pagos": links / "svc-pagos", "ledger": ledger}
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def test_repo_index_resuelve_symlinks(index, repos):
 
 
 def test_resuelve_literal_alias_y_nombre_de_repo(index):
-    for cited in ("service/payments.go", "PAGOS/service/payments.go", "usrv-pagos/service/payments.go"):
+    for cited in ("service/payments.go", "PAGOS/service/payments.go", "svc-pagos/service/payments.go"):
         status, matches = index.resolve(cited)
         assert status == cit.STATUS_OK, cited
         assert matches[0][0] == "pagos"
@@ -118,7 +118,7 @@ def test_rechaza_rutas_fuera_de_repos(index):
 
 
 def test_elidida_e_inexistente(index):
-    assert index.resolve("usrv-pagos/.../payments.go")[0] == cit.STATUS_ELIDED
+    assert index.resolve("svc-pagos/.../payments.go")[0] == cit.STATUS_ELIDED
     assert index.resolve("service/gone.go")[0] == cit.STATUS_MISSING
     assert index.resolve("PAGOS/service/gone.go")[0] == cit.STATUS_MISSING
 
@@ -144,7 +144,7 @@ def test_check_doc_lineas_y_simbolos(tmp_path, index):
                 "- `Nothing` estaba en service/payments.go:2",
                 "- fuera de rango: service/payments.go:99",
                 "- rango ok: service/payments.go:3-5 con `ProcessPayment`",
-                "- sin línea: usrv-ledger/serverless.yml",
+                "- sin línea: svc-ledger/serverless.yml",
                 "- R-07 borrado: service/gone.go:10",
                 "- ambigua: tool/common.go:1",
             ]
@@ -157,7 +157,7 @@ def test_check_doc_lineas_y_simbolos(tmp_path, index):
     assert st["service/payments.go:2"] == cit.STATUS_SYMBOL_ABSENT
     assert st["service/payments.go:99"] == cit.STATUS_OUT_OF_RANGE
     assert st["service/payments.go:3-5"] == cit.STATUS_OK
-    assert st["usrv-ledger/serverless.yml"] == cit.STATUS_OK
+    assert st["svc-ledger/serverless.yml"] == cit.STATUS_OK
     assert st["service/gone.go:10"] == cit.STATUS_MISSING
     assert st["tool/common.go:1"] == cit.STATUS_AMBIGUOUS
 

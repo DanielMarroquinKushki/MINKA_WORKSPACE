@@ -19,7 +19,7 @@ Uso en cualquier módulo:
 
 Cambio de proyecto en runtime (main.py --project X):
     from minka.config_loader import set_project
-    set_project("amex-colombia")   # muta `config` in place → todos lo ven
+    set_project("mi-proyecto")   # muta `config` in place → todos lo ven
 """
 
 import importlib.util

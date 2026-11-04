@@ -43,7 +43,7 @@ def _commit(repo: Path, rel: str, content: str, msg: str) -> str:
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    r = tmp_path / "usrv-demo"
+    r = tmp_path / "svc-demo"
     r.mkdir()
     _git(r, "init", "-q")
     _commit(r, "gateway/sender.go", "package gateway\n", "base")

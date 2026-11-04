@@ -13,9 +13,41 @@ Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
 `<DATA_DIR>/.env` (LLM_BACKEND, AWS_PROFILE).
 
 **Proyectos (Arnés Global):**
-- `minka` → usa `DEFAULT_PROJECT` de `<DATA_DIR>/config_local.py` (proyecto de referencia: amex-colombia)
+- `minka` → usa `DEFAULT_PROJECT` de `<DATA_DIR>/config_local.py`
 - `minka --project <nombre>` → cambia de proyecto
-- Proyecto nuevo: ver `projects/_template/README.md`
+- Proyecto nuevo: `minka --new-project <nombre>` (ver `projects/_template/README.md`
+  y `docs/ONBOARDING.md`)
+- Onboarding y diagnóstico: `minka init` (guiado, nunca sobrescribe) y `minka doctor`
+  (✓/✗: Python, uv, sesión, REPOS, chromadb, proyecto, contexto vivo)
+
+**Comandos y flags de la CLI:**
+- `minka "pedido"` / `minka` (REPL). `--agent <a>` salta el planner (modo completo).
+- `--completo` fuerza la respuesta completa; por defecto las consultas puntuales
+  (`router=info_direct`) salen breves con todas las citas y una nota "respuesta acotada".
+  "en detalle" en el pedido hace lo mismo. `--debug` también desactiva el perfil breve.
+- `--plain` / `MINKA_PLAIN=1`: salida sin renderizar Markdown (`core/render.py`). Sin TTY,
+  con `--quiet`, `--json-out` o `MINKA_SOURCE=bridge` ya sale cruda.
+- `minka stats [--day|--month] [--project] [--agent] [--source]`: tokens, cache, costo,
+  rutas del router, cierres recortados, citas no encontradas y `prompt_hash` (línea base:
+  sha256 de prompts + tools + MODELS; si aparece más de uno en el rango, las
+  comparaciones no son válidas).
+- `minka knowledge check --project P`: verifica las citas `archivo:línea` de
+  `knowledge/extracted/` y del catálogo de riesgos contra REPOS (exit 1 si hay rotas).
+- `minka evals routing --runs N`: mide el planner (cuesta tokens).
+
+**Router (`core/orchestrator/router.py`), capas en orden:** saludo/estado/meta/ambiguo
+(costo 0) → `info_direct` si `PLANNER_SKIP_INFO=true` y el pedido es una pregunta de
+información simple (architecture directo, sin planner) → planner LLM con reglas duras
+(`no_plan`, `planner_error`, `followup_change`, `inherit`, `no_changes`). "¿En qué
+quedamos?" al abrir la sesión responde con el contexto vivo sin modelo.
+
+**Contexto vivo y citas:**
+- `ACTIVE_CONTEXT_DIR` (default `<DATA_DIR>/active-context`, override en
+  `config_local.py`): `<proyecto>.md` + última entrada real del `session_log` viajan como
+  primer bloque del mensaje user (nunca en el system). Topes `LIVE_CONTEXT_MAX_LINES` /
+  `LIVE_CONTEXT_MAX_TOKENS`; aviso si supera `LIVE_CONTEXT_STALE_DAYS`.
+- `CITATION_CHECK_ENABLED` (default true): las citas de la respuesta se verifican contra
+  REPOS y se anotan `⚠ no existe`; el texto anotado es el que hereda la memoria.
 
 **Si hay error de sesión AWS:**
 ```bash
@@ -38,8 +70,9 @@ Luego: `minka`
 ## Qué hace el proyecto
 
 Sistema **multi-agente de IA (Python)** que analiza, mejora y escribe código en
-los microservicios Go de cada proyecto configurado. Proyecto de referencia
-(amex-colombia): `usrv-acq-pos`, `usrv-acq-hsm`, `usrv-go-core`.
+los microservicios Go de cada proyecto configurado. Cada proyecto declara sus repos en
+`config_local.py` → `REPOS` con alias genéricos, por ejemplo `pos`, `hsm`, `core` y un
+módulo compartido como `payment-crypto`; los alias se usan en las citas (`POS/...`).
 
 Escalable por **niveles de autonomía (3 → 6)** mediante flags de configuración;
 subir de nivel es cambiar **configuración**, no código.
@@ -79,9 +112,9 @@ escritura en repos → core/orchestrator/approval_gate.py (diff + confirmación)
 - `core/knowledge/` — loader + `professional/` genérico (go, hexagonal, patterns, checklist).
 - `core/memory/` — memoria de sesión y persistente (Niveles 4-5 en stub).
 - `core/evaluator/` — evaluación y auto-mejora (Niveles 5-6 en stub).
-- `projects/amex-colombia/` — config, prompts, knowledge (extracted/professional
-  pagos/team). El contexto de corto plazo vive en
-  `<DATA_DIR>/active-context/[proyecto].md`, fuente única de verdad.
+- `<DATA_DIR>/projects/<proyecto>/` — config, prompts, knowledge (extracted/professional
+  /team) de cada proyecto; viven fuera del repo del motor. El contexto de corto plazo
+  vive en `ACTIVE_CONTEXT_DIR/<proyecto>.md`, fuente única de verdad.
 - `projects/_template/` — plantilla para proyectos nuevos (ver su README.md).
 
 ---
@@ -200,5 +233,6 @@ aws sso login --profile bedrock
 ## Entorno de desarrollo
 
 - Python ≥3.12 (uv recomendado). Venv del proyecto: `.venv/` (en `.gitignore`).
-- Instalar: `python -m venv .venv && ./.venv/bin/pip install -r requirements.txt`.
+- Instalar para desarrollar: `uv sync --extra dev` (dependencias en `pyproject.toml`;
+  no hay requirements.txt). Tests: `uv run pytest`; lint: `uv run ruff check`.
 - Dependencias AWS: `anthropic[bedrock]`, `boto3`, `botocore`. AWS CLI para SSO.

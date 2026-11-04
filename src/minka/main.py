@@ -12,8 +12,11 @@ Uso:
     minka --level 3
     minka --index-repos        # Nivel 4 (RAG) — indexa código Go
     minka --index-knowledge    # Nivel 4 (RAG) — indexa .md de knowledge
-    minka --init                       # crea config_local.py y .env en el directorio de datos
+    minka init                 # onboarding guiado: DATA_DIR, config_local.py, .env, REPOS y backend
+    minka doctor               # diagnóstico local (Python, uv, SSO, REPOS, chromadb, proyecto)
+    minka --init                       # solo copia las plantillas (sin preguntas)
     minka --new-project mi-proyecto  # crea el esqueleto de un proyecto nuevo
+    minka knowledge check --project P  # verifica las citas archivo:línea del knowledge
     minka stats [--day YYYY-MM-DD | --month YYYY-MM] [--project P] [--agent A]
     minka evals routing --runs 3 [--json-out r.json]  # solo planner; cuesta tokens
     minka "analiza X" --quiet  # sin la línea final de tokens/costo (stderr)
@@ -273,7 +276,8 @@ def main(
     init: bool = typer.Option(
         False,
         "--init",
-        help="Crea config_local.py y .env en el directorio de datos (nunca sobrescribe) y sale.",
+        help="Copia config_local.py y .env al directorio de datos (nunca sobrescribe) y sale. "
+        "Para el onboarding guiado usa `minka init`.",
     ),
     new_project: bool = typer.Option(
         False,
@@ -662,6 +666,15 @@ def stats(
         f"({agg['ends_with_offer']} respuestas con oferta)     citas no encontradas: "
         f"{agg['citations_missing']}/{agg['citations_total']}[/dim]"
     )
+    hashes = agg.get("prompt_hashes") or {}
+    if hashes:
+        listed = " · ".join(f"{h} ×{n}" for h, n in sorted(hashes.items(), key=lambda kv: -kv[1]))
+        console.print(
+            f"[dim]línea base (prompt_hash): {listed}"
+            + ("     ⚠ más de una línea base en el rango" if len(hashes) > 1 else "")
+            + "[/dim]",
+            soft_wrap=True,
+        )
 
 
 evals_app = typer.Typer(help="Evaluaciones del motor que llaman al LLM (cuestan tokens).")
@@ -729,6 +742,78 @@ def knowledge_check(
     results = citations.check_project(config, active)
     console.print(citations.format_report(results), markup=False, soft_wrap=True)
     if citations.broken(results):
+        raise typer.Exit(code=1)
+
+
+@app.command(
+    "init",
+    help="Onboarding guiado: crea el directorio de datos, config_local.py y .env (sin sobrescribir) "
+    "y pregunta REPOS y backend. Nunca imprime los valores que escribes.",
+)
+def init_cmd(
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Sin preguntas: solo copia las plantillas (igual que --init)."
+    ),
+):
+    from minka.core.project_scaffold import apply_init_answers, init_data_dir
+
+    result = init_data_dir()
+    data_dir = Path(result["data_dir"])
+    console.print(f"Directorio de datos: {data_dir}")
+    for path in result["created"]:
+        console.print(f"  [green]creado[/green]   {Path(path).name}")
+    for path in result["skipped"]:
+        console.print(f"  [yellow]ya existe[/yellow] {Path(path).name} (no se toca)")
+    if yes or not result["created"]:
+        if not result["created"]:
+            console.print("[dim]Nada que preguntar: edita config_local.py y .env a mano.[/dim]")
+        console.print("[dim]Siguiente: `minka doctor`.[/dim]")
+        return
+
+    console.print("\n[bold]Repos del proyecto[/bold] (alias y ruta absoluta; Enter en el alias para terminar)")
+    repos: dict[str, str] = {}
+    while True:
+        alias = console.input("  alias: ").strip()
+        if not alias:
+            break
+        path = console.input(f"  ruta de {alias}: ").strip()
+        if not path:
+            continue
+        repos[alias] = path
+        if not Path(path).expanduser().is_dir():
+            console.print("  [yellow]aviso:[/yellow] esa ruta no existe todavía; se guarda igual.")
+    backend = console.input("\n[bold]Backend[/bold] [bedrock/anthropic] (Enter = bedrock): ").strip().lower() or "bedrock"
+    if backend not in ("bedrock", "anthropic"):
+        backend = "bedrock"
+    profile = ""
+    if backend == "bedrock":
+        profile = console.input("Perfil AWS SSO (Enter = bedrock): ").strip() or "bedrock"
+    touched = apply_init_answers(data_dir, repos, backend, profile, result["created"])
+    console.print(
+        f"\n{len(repos)} repo(s) y backend {backend} guardados en {len(touched)} archivo(s)."
+    )
+    if backend == "anthropic":
+        console.print("[dim]Completa ANTHROPIC_API_KEY en .env (no se pide aquí).[/dim]")
+    console.print("[dim]Siguiente: `minka doctor` y luego `minka --new-project <nombre>`.[/dim]")
+
+
+@app.command("doctor", help="Diagnóstico local del entorno: Python, uv, sesión, REPOS, chromadb, proyecto.")
+def doctor_cmd(
+    project: str = typer.Option(None, "--project", help="Proyecto a verificar (default: el activo)."),
+):
+    from minka.core import doctor
+
+    if project:
+        from minka.config_loader import set_project
+
+        try:
+            set_project(project)
+        except FileNotFoundError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2)
+    checks = doctor.run_checks(config)
+    console.print(doctor.format_report(checks), markup=False, highlight=False)
+    if doctor.has_critical_failure(checks):
         raise typer.Exit(code=1)
 
 

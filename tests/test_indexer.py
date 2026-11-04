@@ -53,7 +53,7 @@ def fake_chroma(monkeypatch):
 
 
 def _repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "usrv-demo"
+    repo = tmp_path / "svc-demo"
     repo.mkdir()
     (repo / "a.go").write_text("package a\n\nfunc Foo() {}\n", encoding="utf-8")
     (repo / "b.go").write_text("package a\n\nfunc Bar() {}\n\ntype T struct{}\n", encoding="utf-8")

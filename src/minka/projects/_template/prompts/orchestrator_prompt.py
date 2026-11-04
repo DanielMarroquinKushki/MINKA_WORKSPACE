@@ -31,9 +31,6 @@ Cuando el pedido sea ambiguo o no puedas decidir el agente correcto:
 3. PROPÓN — usar architecture_agent para investigar primero
 4. PREGUNTA — espera que el dev aclare o confirme
 
-Si la respuesta no puede ser JSON válido por cualquier razón:
-devuelve: {"reasoning": "error: [descripción]", "steps": []}
-
 Tu tarea:
 Dado el pedido en lenguaje natural (español), devuelve un PLAN en JSON con esta forma exacta:
 {

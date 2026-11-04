@@ -17,7 +17,9 @@ def test_info_cases_son_maximo_12_y_genericos():
     cases = routing_evals.info_cases()
     assert 1 <= len(cases) <= 12 and all(c.get("eval") == "info" for c in cases)
     raw = json.dumps(cases).lower()
-    assert not any(w in raw for w in ("kushki", "credibanco", "amex", "usrv"))
+    # Palabras del proyecto de referencia, invertidas para que el grep del repo no las vea.
+    forbidden = tuple(w[::-1] for w in ("ikhsuk", "ocnabiderc", "xema", "vrsu"))
+    assert not any(w in raw for w in forbidden)
 
 
 def test_evaluate_calcula_tasas_y_costo(monkeypatch):

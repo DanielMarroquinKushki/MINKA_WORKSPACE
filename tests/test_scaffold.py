@@ -23,7 +23,7 @@ def fake_workspace(tmp_path, monkeypatch):
 
 
 def test_create_project_builds_structure(fake_workspace):
-    r = create_project("mi-proj", core_module="usrv-x")
+    r = create_project("mi-proj", core_module="svc-x")
     pd = Path(r["project_dir"])
     assert (pd / "config.py").is_file()
     assert not (pd / "config.py.example").exists()
@@ -32,7 +32,7 @@ def test_create_project_builds_structure(fake_workspace):
     assert Path(r["active_context"]) == fake_workspace / "active-context" / "mi-proj.md"
     assert Path(r["active_context"]).is_file()
     assert not (Path(config.BASE_DIR).parent / "active-context" / "mi-proj.md").exists()
-    assert 'CORE_MODULE_NAME = "usrv-x"' in (pd / "config.py").read_text()
+    assert 'CORE_MODULE_NAME = "svc-x"' in (pd / "config.py").read_text()
 
 
 def test_create_project_rejects_duplicate(fake_workspace):

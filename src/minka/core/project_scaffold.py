@@ -84,6 +84,39 @@ def init_data_dir() -> dict:
     return {"data_dir": str(data_dir), "created": created, "skipped": skipped}
 
 
+def apply_init_answers(
+    data_dir: Path,
+    repos: dict[str, str],
+    backend: str,
+    aws_profile: str,
+    created: list[str],
+) -> list[str]:
+    """Escribe las respuestas de `minka init` SOLO en los archivos que se acaban de crear
+    (nunca pisa un config_local.py o .env previos). Devuelve los archivos tocados."""
+    touched: list[str] = []
+    local = data_dir / "config_local.py"
+    if repos and str(local) in created:
+        text = local.read_text(encoding="utf-8")
+        block = "REPOS = {\n" + "".join(f'    {alias!r}: {path!r},\n' for alias, path in repos.items()) + "}\n"
+        new_text, n = re.subn(r"REPOS = \{.*?\n\}\n", block, text, count=1, flags=re.DOTALL)
+        local.write_text(new_text if n else text + "\n" + block, encoding="utf-8")
+        touched.append(str(local))
+    env = data_dir / ".env"
+    if str(env) in created:
+        lines = env.read_text(encoding="utf-8").splitlines()
+        values = {"LLM_BACKEND": backend, "AWS_PROFILE": aws_profile}
+        seen = set()
+        for i, line in enumerate(lines):
+            key = line.split("=", 1)[0].strip()
+            if key in values and not line.lstrip().startswith("#"):
+                lines[i] = f"{key}={values[key]}"
+                seen.add(key)
+        lines += [f"{k}={v}" for k, v in values.items() if k not in seen]
+        env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        touched.append(str(env))
+    return touched
+
+
 def create_project(
     name: str,
     core_module: str | None = None,
@@ -118,8 +151,11 @@ def create_project(
         if example_path.is_file():
             example_path.rename(project_dir / real_rel)
 
-    # 3. Crea el active-context (fuente única de corto plazo).
-    active_context_dir = Path(config.DATA_DIR) / "active-context"
+    # 3. Crea el active-context (fuente única de corto plazo) en ACTIVE_CONTEXT_DIR
+    #    (default <DATA_DIR>/active-context; config_local puede apuntar a otra carpeta).
+    from minka.core.memory.live_context import active_context_dir as _ac_dir
+
+    active_context_dir = _ac_dir(config)
     active_context_dir.mkdir(parents=True, exist_ok=True)
     active_context = active_context_dir / f"{name}.md"
     if not active_context.exists():

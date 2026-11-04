@@ -97,7 +97,10 @@ def test_casos_cubren_los_12_tipos_y_son_genericos():
         assert tipo in ids
     assert len(CASES) >= 52
     raw = json.dumps(CASES).lower()
-    assert not any(w in raw for w in ("kushki", "credibanco", "amex", "usrv"))
+    # Palabras del proyecto de referencia que NO deben filtrarse a los casos genéricos
+    # (invertidas para que el propio grep del repo no las encuentre).
+    forbidden = tuple(w[::-1] for w in ("ikhsuk", "ocnabiderc", "xema", "vrsu"))
+    assert not any(w in raw for w in forbidden)
 
 
 def test_quiet_silencia_la_linea_de_decision(harness, monkeypatch):

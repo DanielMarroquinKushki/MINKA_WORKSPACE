@@ -114,6 +114,16 @@ class Orchestrator:
         live = self.live_context()
         return live.user_block() if live else ""
 
+    @staticmethod
+    def _prompt_hash() -> str | None:
+        """Huella de la línea base (core/baseline.py); best-effort, nunca rompe el registro."""
+        try:
+            from minka.core import baseline
+
+            return baseline.prompt_hash()
+        except Exception:  # noqa: BLE001
+            return None
+
     def clear_session(self) -> None:
         """Olvida el historial de la sesión (REPL /clear)."""
         self.memory.clear()
@@ -333,6 +343,7 @@ class Orchestrator:
                 closings_removed=self.last_closings_removed,
                 citations_total=self.last_citations_total,
                 citations_missing=self.last_citations_missing,
+                prompt_hash=self._prompt_hash(),
             )
         except Exception:  # noqa: BLE001
             return {}

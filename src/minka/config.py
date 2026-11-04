@@ -71,10 +71,8 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "claude-sonnet-5")
 ANTHROPIC_MODEL = MODELS.get("development_agent", DEFAULT_MODEL)
 
 # ---------------------------------------------------------------------------
-# Repos Go — VACÍOS por defecto. Se completan en config_local.py.
-# NOTA: la ruta real en este equipo es:
-#   credibanco_project/microservices_amex_colombia/{usrv-acq-pos,usrv-acq-hsm,usrv-go-core}
-# (el prompt original decía credibanco/ pero esa carpeta no existe)
+# Repos Go — VACÍOS por defecto. Se completan en config_local.py con rutas absolutas
+# de TU equipo ({alias: ruta}); los alias deben coincidir con los del proyecto.
 # ---------------------------------------------------------------------------
 REPOS = {
     "pos": "",
@@ -124,9 +122,9 @@ HISTORY_MAX_TURNS = int(os.getenv("HISTORY_MAX_TURNS", "5"))
 HISTORY_RESULT_CHARS = int(os.getenv("HISTORY_RESULT_CHARS", "1500"))
 # Contexto vivo del proyecto (core/memory/live_context.py): <proyecto>.md de
 # ACTIVE_CONTEXT_DIR + última entrada real del session_log, como primer bloque del mensaje
-# user (nunca en el system). ACTIVE_CONTEXT_DIR se sobreescribe en config_local.py cuando el
-# active-context vive fuera del directorio de datos.
-ACTIVE_CONTEXT_DIR = DATA_DIR / "active-context"
+# user (nunca en el system). None = <DATA_DIR>/active-context; se sobreescribe en
+# config_local.py (o con la env ACTIVE_CONTEXT_DIR) cuando vive fuera del directorio de datos.
+ACTIVE_CONTEXT_DIR = os.getenv("ACTIVE_CONTEXT_DIR") or None
 LIVE_CONTEXT_ENABLED = os.getenv("LIVE_CONTEXT_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 LIVE_CONTEXT_MAX_LINES = int(os.getenv("LIVE_CONTEXT_MAX_LINES", "60"))
 LIVE_CONTEXT_MAX_TOKENS = int(os.getenv("LIVE_CONTEXT_MAX_TOKENS", "750"))

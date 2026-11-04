@@ -84,7 +84,7 @@ Se reutiliza `core/tools/analysis/citations.py` sin cambios:
 ## 5. Tests (`tests/test_citation_check.py`)
 
 Repos temporales en `tmp_path` (uno por symlink), sin red, sin modelo, sin DATA_DIR real
-(conftest ya lo aísla), nombres neutros (`pagos`, `ledger`, `usrv-demo`).
+(conftest ya lo aísla), nombres neutros (`pagos`, `ledger`, `svc-demo`).
 
 1. Anota `⚠ no existe` en cita a archivo borrado y `⚠ línea fuera de rango` en línea
    mayor que el largo; el resto de la línea queda idéntico.

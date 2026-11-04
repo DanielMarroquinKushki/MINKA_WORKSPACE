@@ -1,4 +1,4 @@
-"""Fixtures compartidas: proyecto demo en tmp_path y exclusión de *_amex.py sin amex-colombia."""
+"""Fixtures compartidas: DATA_DIR aislado y proyecto demo en tmp_path (sin datos reales)."""
 
 import json
 import os
@@ -19,11 +19,8 @@ from minka import config_loader  # noqa: E402
 from minka.config_loader import config  # noqa: E402
 from minka.core.orchestrator import approval_gate as ag  # noqa: E402
 
-_DEV_AGENT = pathlib.Path(__file__).resolve().parent.parent
-# Sin projects/amex-colombia/ (repo del motor genérico) los tests byte a byte de amex no aplican.
-# PENDIENTE: con el layout src/ y amex en DATA_DIR, esta ruta (raíz del repo) ya nunca
-# tiene amex-colombia, así que *_amex.py siempre se excluye. Revisar la condición.
-collect_ignore_glob = [] if (_DEV_AGENT / "projects" / "amex-colombia").is_dir() else ["*_amex.py"]
+# Los tests del motor son genéricos: el proyecto de referencia vive en DATA_DIR, fuera del
+# repo, así que aquí no hay fixtures por proyecto real (ver proyecto demo más abajo).
 
 # Las 7 claves del proyecto demo (valores de ejemplo, sin datos reales).
 DEMO_VALUES = {

@@ -11,7 +11,7 @@ Resolución de una cita (en este orden, gana la primera que exista):
   1. ruta literal bajo cada repo de config.REPOS;
   2. alias: el primer segmento coincide (sin distinguir mayúsculas) con una clave de
      REPOS, p. ej. `CORE/middleware/x.go` → REPOS["core"]/middleware/x.go;
-  3. el primer segmento es el nombre del directorio del repo (`usrv-demo/…`);
+  3. el primer segmento es el nombre del directorio del repo (`svc-demo/…`);
   4. por basename: archivos del índice cuya ruta relativa termina en la cita
      (único → resuelta; varios → ambigua).
 Toda ruta resuelta se normaliza con resolve() y debe quedar dentro de un repo; lo que

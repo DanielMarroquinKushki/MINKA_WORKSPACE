@@ -1,4 +1,4 @@
-# kushki-workspace — dev-agent
+# minka — dev-agent
 
 Sistema multi-agente de IA para desarrollo de software.
 Analiza, revisa y modifica código respetando los estándares
@@ -11,14 +11,16 @@ Escalable por niveles de autonomía (3 → 6) mediante flags de configuración.
 ## Instalación
 
 ```bash
-uv tool install git+<url-del-repo>
+uv tool install git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE
 ```
 
-Después: `minka --init` (crea `config_local.py` y `.env` en `<DATA_DIR>`, sin
-sobrescribir), complétalos, corre `minka-sso` y luego `minka`. `<DATA_DIR>` es la
-variable `DATA_DIR_ENV` de `_app.py` o, si no está, `~/.<APP_NAME>/`.
+Después: `minka init` (onboarding guiado: crea `config_local.py` y `.env` en `<DATA_DIR>`
+sin sobrescribir y pregunta REPOS y backend), `minka-sso` si usas Bedrock, `minka doctor`
+para verificar el entorno y luego `minka`. `<DATA_DIR>` es `MINKA_HOME` o, si no está,
+`~/.minka/`. Guía paso a paso: `docs/ONBOARDING.md`.
 
-> Nivel 4 (RAG): instala con el extra (`uv tool install 'minka-workspace[rag] @ git+<url-del-repo>'`;
+> Nivel 4 (RAG): instala con el extra
+> (`uv tool install 'minka-workspace[rag] @ git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE'`;
 > el reranker opcional es `[rag,rerank]` y trae torch), pon `RAG_ENABLED=True` y luego
 > `minka --index-repos`.
 
