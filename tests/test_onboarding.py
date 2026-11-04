@@ -31,7 +31,8 @@ def test_apply_init_answers_escribe_solo_en_archivos_nuevos(data_dir):
     touched = apply_init_answers(data_dir, {"pos": "/r/pos", "core": "/r/core"}, "bedrock", "mi-perfil", r["created"])
     assert len(touched) == 2
     local = (data_dir / "config_local.py").read_text(encoding="utf-8")
-    assert "'pos': '/r/pos'" in local and "'core': '/r/core'" in local and "mi-repo" not in local
+    assert "'pos': '/r/pos'" in local and "'core': '/r/core'" in local
+    assert 'REPOS_ROOT = "~/ruta' in local  # la plantilla nueva se conserva; REPOS se agrega (esquema viejo)
     env = (data_dir / ".env").read_text(encoding="utf-8")
     assert "LLM_BACKEND=bedrock" in env and "AWS_PROFILE=mi-perfil" in env
     assert sum(1 for ln in env.splitlines() if ln.startswith("AWS_PROFILE=")) == 1

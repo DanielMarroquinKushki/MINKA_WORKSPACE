@@ -83,6 +83,43 @@ def _load_local_vars(data_dir: Path) -> dict:
     return values
 
 
+def resolve_repos(project_values: dict, local_values: dict) -> tuple[dict[str, str], str]:
+    """Funde los repos del proyecto con la máquina del dev.
+
+    - REPOS del proyecto (`projects/<p>/config.py`): {alias: ruta}. Las rutas relativas se
+      resuelven contra REPOS_ROOT (config_local gana sobre el proyecto); `~` se expande.
+    - REPOS_OVERRIDES de config_local: {alias: ruta} pisa rutas puntuales del proyecto.
+    - Compatibilidad: si el proyecto no define REPOS y config_local sí, se usa el esquema
+      viejo tal cual (REPOS_SOURCE="local"; `minka doctor` avisa la deprecación).
+
+    Devuelve (REPOS resuelto, origen) con origen en {"project", "local", "none"}. Los 11
+    consumidores siguen leyendo `config.REPOS`: aquí termina la resolución.
+    """
+    project_repos = dict(project_values.get("REPOS") or {})
+    local_repos = dict(local_values.get("REPOS") or {})
+    root = local_values.get("REPOS_ROOT") or project_values.get("REPOS_ROOT")
+    overrides = dict(local_values.get("REPOS_OVERRIDES") or {})
+
+    if project_repos:
+        base, source = project_repos, "project"
+    elif local_repos:
+        base, source = local_repos, "local"
+    else:
+        return {}, "none"
+
+    resolved: dict[str, str] = {}
+    for alias, path in base.items():
+        raw = overrides.get(alias, path)
+        if not raw:
+            resolved[alias] = ""
+            continue
+        p = Path(str(raw)).expanduser()
+        if not p.is_absolute() and root:
+            p = Path(str(root)).expanduser() / p
+        resolved[alias] = str(p)
+    return resolved, source
+
+
 def load_config(project: str | None = None, projects_dir: Path | None = None) -> SimpleNamespace:
     values = _uppercase_vars(_base)
 
@@ -98,11 +135,15 @@ def load_config(project: str | None = None, projects_dir: Path | None = None) ->
     # Capa proyecto: explícito > DEFAULT_PROJECT local > ninguno (solo global).
     if project is None:
         project = local_values.get("DEFAULT_PROJECT")
+    project_values: dict = {}
     if project:
-        values.update(_load_project_vars(project, projects_dir))
+        project_values = _load_project_vars(project, projects_dir)
+        values.update(project_values)
 
     values.update(local_values)
     values["PROJECTS_DIR"] = projects_dir
+    # REPOS vive en el proyecto; config_local solo aporta la raíz y overrides por alias.
+    values["REPOS"], values["REPOS_SOURCE"] = resolve_repos(project_values, local_values)
 
     # USE_BEDROCK se deriva de LLM_BACKEND DESPUÉS del merge: si config_local
     # fija el backend, deja de depender de variables del shell. Sin LLM_BACKEND,

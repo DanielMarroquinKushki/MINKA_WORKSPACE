@@ -175,7 +175,8 @@ def create_project(
         "next_steps": [
             f"Completa los parámetros en {project_dir / 'config.py'} "
             "(CORE_MODULE_NAME, PR_CHECKLIST, AGENT_KNOWLEDGE, AGENT_TOOLS).",
-            f"Agrega las rutas de repos en {Path(config.DATA_DIR) / 'config_local.py'} → REPOS.",
+            f"Declara los repos en {project_dir / 'config.py'} → REPOS (rutas relativas) y "
+            f"REPOS_ROOT en {Path(config.DATA_DIR) / 'config_local.py'}.",
             f"Arranca: {config.APP_NAME} --project {name}",
         ],
     }

@@ -74,7 +74,7 @@ def test_fallos_con_hint_y_bloqueantes(tmp_path):
     assert not by["Contexto vivo"].ok and not by["Contexto vivo"].critical
     assert doctor.has_critical_failure(checks)
     report = doctor.format_report(checks)
-    assert "✗ Repos" in report and "→ Corrige las rutas" in report and "bloqueantes" in report
+    assert "✗ Repos" in report and "→ Revisa REPOS_ROOT" in report and "bloqueantes" in report
 
 
 def test_env_ausente_avisa_sin_bloquear_y_config_local_ausente_bloquea(tmp_path):

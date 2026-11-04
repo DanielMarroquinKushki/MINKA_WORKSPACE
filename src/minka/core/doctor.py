@@ -138,8 +138,16 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
 
     repos = {k: v for k, v in (getattr(cfg, "REPOS", {}) or {}).items() if v}
     missing = [alias for alias, path in repos.items() if not Path(str(path)).expanduser().is_dir()]
+    source = getattr(cfg, "REPOS_SOURCE", "none")
     if not repos:
-        checks.append(Check("Repos", False, "REPOS vacío", "Agrega {alias: ruta} en config_local.py → REPOS."))
+        checks.append(
+            Check(
+                "Repos",
+                False,
+                "REPOS vacío",
+                "Declara {alias: ruta relativa} en projects/<p>/config.py → REPOS y REPOS_ROOT en config_local.py.",
+            )
+        )
     else:
         checks.append(
             Check(
@@ -147,9 +155,19 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
                 not missing,
                 f"{len(repos) - len(missing)}/{len(repos)} rutas existen"
                 + (f"; faltan: {', '.join(missing)}" if missing else ""),
-                "Corrige las rutas en config_local.py → REPOS.",
+                "Revisa REPOS_ROOT / REPOS_OVERRIDES en config_local.py y las rutas relativas del proyecto.",
             )
         )
+        if source == "local":
+            checks.append(
+                Check(
+                    "REPOS por proyecto",
+                    False,
+                    "REPOS sigue en config_local.py (esquema viejo, deprecado)",
+                    "Mueve los alias a projects/<p>/config.py → REPOS (rutas relativas) y deja REPOS_ROOT en config_local.py.",
+                    critical=False,
+                )
+            )
 
     rag = bool(getattr(cfg, "RAG_ENABLED", False))
     chroma = _module_available("chromadb")

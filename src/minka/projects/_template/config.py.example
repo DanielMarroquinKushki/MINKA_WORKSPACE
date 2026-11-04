@@ -6,6 +6,14 @@ Se fusiona ENCIMA de config.py (global) y DEBAJO de config_local.py (dev):
 Solo constantes en MAYÚSCULAS (mismo contrato que config_loader).
 """
 
+# Repos del proyecto: {alias: ruta}. Rutas RELATIVAS a REPOS_ROOT (la carpeta donde cada
+# dev clona los repos, definida en su config_local.py); una ruta absoluta se usa tal cual.
+# Los alias se usan en las citas (POS/ruta/archivo.go:12) y en las tools (list_repos).
+REPOS = {
+    "pos": "svc-pos",
+    "core": "svc-core",
+}
+
 # Módulo compartido cuya versión se compara entre repos (check_version_drift).
 CORE_MODULE_NAME = "<modulo-core>"
 

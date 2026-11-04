@@ -10,12 +10,15 @@ Solo define las constantes que quieras sobreescribir; el resto se hereda
 de config.py automáticamente vía config_loader.py.
 """
 
-# Rutas ABSOLUTAS de los repos del proyecto en TU equipo: {alias: ruta}.
-# Los alias deben coincidir con los del proyecto (p. ej. las claves de
-# knowledge/extracted/_sources.json). No dejes una ruta vacía: "" es el cwd.
-REPOS = {
-    "mi-repo": "/ruta/absoluta/a/mi-repo",
-}
+# Repos: los alias y sus rutas RELATIVAS viven en projects/<proyecto>/config.py → REPOS.
+# Aquí solo va la carpeta de TU equipo donde están clonados (REPOS_ROOT) y, si algún repo
+# vive en otro lado, su ruta puntual en REPOS_OVERRIDES.
+REPOS_ROOT = "~/ruta/donde/clonas/los/repos"
+# REPOS_OVERRIDES = {"mi-repo": "/otra/ruta/absoluta/a/mi-repo"}
+
+# Esquema viejo (sigue funcionando, `minka doctor` lo marca como deprecado): REPOS con
+# rutas absolutas aquí, solo si el proyecto no define REPOS.
+# REPOS = {"mi-repo": "/ruta/absoluta/a/mi-repo"}
 
 # Pilares del equipo: normalmente van en projects/<proyecto>/config.py, no aquí.
 # Vacíos = el gate y las lentes los omiten.

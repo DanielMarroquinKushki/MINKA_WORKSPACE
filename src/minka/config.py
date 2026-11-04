@@ -71,14 +71,17 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "claude-sonnet-5")
 ANTHROPIC_MODEL = MODELS.get("development_agent", DEFAULT_MODEL)
 
 # ---------------------------------------------------------------------------
-# Repos Go — VACÍOS por defecto. Se completan en config_local.py con rutas absolutas
-# de TU equipo ({alias: ruta}); los alias deben coincidir con los del proyecto.
+# Repos del proyecto: {alias: ruta}. Viven en projects/<p>/config.py con rutas relativas
+# a REPOS_ROOT; config_local.py aporta REPOS_ROOT (la carpeta de TU equipo) y, si hace
+# falta, REPOS_OVERRIDES {alias: ruta} para pisar rutas puntuales. config_loader.resolve_repos
+# funde las capas y deja el resultado en config.REPOS (lo que leen tools, citas, indexer,
+# doctor…). El esquema viejo (REPOS en config_local) sigue funcionando; `minka doctor`
+# avisa la deprecación. REPOS_SOURCE lo fija el loader: "project" | "local" | "none".
 # ---------------------------------------------------------------------------
-REPOS = {
-    "pos": "",
-    "hsm": "",
-    "core": "",
-}
+REPOS: dict = {}
+REPOS_ROOT: str | None = None
+REPOS_OVERRIDES: dict = {}
+REPOS_SOURCE = "none"
 
 # ---------------------------------------------------------------------------
 # Parametrización por proyecto (Arnés Global)
