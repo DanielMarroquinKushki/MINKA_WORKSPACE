@@ -659,5 +659,43 @@ def evals_routing(
         console.print(f"[dim]Reporte: {json_out}[/dim]")
 
 
+knowledge_app = typer.Typer(help="Mantenimiento del knowledge del proyecto (sin LLM).")
+app.add_typer(knowledge_app, name="knowledge")
+
+
+@knowledge_app.command(
+    "check",
+    help="Verifica las citas archivo:línea de knowledge/extracted/ y del catálogo de riesgos "
+    "contra los repos de REPOS. Exit 1 si hay citas rotas.",
+)
+def knowledge_check(
+    project: str = typer.Option(
+        None, "--project", help="Proyecto a revisar (default: el activo / DEFAULT_PROJECT)."
+    ),
+):
+    from minka.core.tools.analysis import citations
+
+    if project:
+        from minka.config_loader import set_project
+
+        try:
+            set_project(project)
+        except FileNotFoundError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2)
+    active = getattr(config, "ACTIVE_PROJECT", None)
+    if not active:
+        console.print("[red]No hay proyecto activo: usa --project o DEFAULT_PROJECT.[/red]")
+        raise typer.Exit(code=2)
+    index = citations.RepoIndex(getattr(config, "REPOS", {}))
+    if index.empty:
+        console.print("[red]REPOS no tiene rutas válidas: nada contra qué verificar.[/red]")
+        raise typer.Exit(code=2)
+    results = citations.check_project(config, active)
+    console.print(citations.format_report(results), markup=False, soft_wrap=True)
+    if citations.broken(results):
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
