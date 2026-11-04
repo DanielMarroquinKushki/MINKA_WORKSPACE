@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -26,9 +27,12 @@ class Check:
     detail: str
     hint: str = ""
     critical: bool = True
+    optional: bool = False  # "–": falta algo que no hace falta en esta configuración
 
     @property
     def mark(self) -> str:
+        if self.optional:
+            return "–"
         return "✓" if self.ok else "✗"
 
 
@@ -92,16 +96,25 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
     data_dir = Path(getattr(cfg, "DATA_DIR", "."))
     local = data_dir / "config_local.py"
     env = data_dir / ".env"
-    # config_local.py es imprescindible (REPOS, DEFAULT_PROJECT); .env es opcional cuando el
-    # backend y el perfil se definen en config_local.py o en el entorno.
+    # config_local.py es imprescindible (REPOS, DEFAULT_PROJECT). .env es opcional cuando
+    # config_local.py ya define el backend (LLM_BACKEND o AWS_PROFILE): entonces su
+    # ausencia se marca "–", no ✗.
     missing_files = [n for n, p in (("config_local.py", local), (".env", env)) if not p.is_file()]
+    backend_in_local = bool(
+        local.is_file()
+        and re.search(r"^\s*(LLM_BACKEND|AWS_PROFILE)\s*=", local.read_text(encoding="utf-8", errors="ignore"), re.M)
+    )
+    env_optional = missing_files == [".env"] and backend_in_local
     checks.append(
         Check(
             "Directorio de datos",
-            not missing_files,
-            "config_local.py y .env presentes" if not missing_files else "falta " + " y ".join(missing_files),
+            not missing_files or env_optional,
+            "config_local.py y .env presentes"
+            if not missing_files
+            else ("sin .env (opcional: backend definido en config_local.py)" if env_optional else "falta " + " y ".join(missing_files)),
             "Corre `minka init` para crearlos sin sobrescribir.",
             critical=not local.is_file(),
+            optional=env_optional,
         )
     )
 

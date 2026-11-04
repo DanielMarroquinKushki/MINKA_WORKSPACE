@@ -88,6 +88,23 @@ def test_env_ausente_avisa_sin_bloquear_y_config_local_ausente_bloquea(tmp_path)
     assert by["Directorio de datos"].critical and "config_local.py" in by["Directorio de datos"].detail
 
 
+def test_env_ausente_es_opcional_si_config_local_define_backend(tmp_path):
+    cfg = _cfg(tmp_path)
+    (cfg.DATA_DIR / ".env").unlink()
+    (cfg.DATA_DIR / "config_local.py").write_text('LLM_BACKEND = "bedrock"\n', encoding="utf-8")
+    checks = doctor.run_checks(cfg, sso_cache_dir=_sso_cache(tmp_path, timedelta(hours=1)), now=NOW)
+    by = {c.name: c for c in checks}
+    c = by["Directorio de datos"]
+    assert c.ok and c.optional and c.mark == "–" and "opcional" in c.detail
+    assert not doctor.has_critical_failure(checks)
+    report = doctor.format_report(checks)
+    assert "– Directorio de datos" in report and "Todo en orden" in report
+    # Solo AWS_PROFILE también cuenta como backend definido.
+    (cfg.DATA_DIR / "config_local.py").write_text('AWS_PROFILE = "perfil"\n', encoding="utf-8")
+    by = {c.name: c for c in doctor.run_checks(cfg, sso_cache_dir=tmp_path / "x", now=NOW)}
+    assert by["Directorio de datos"].optional
+
+
 def test_api_directa_pide_api_key(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = _cfg(tmp_path, USE_BEDROCK=False)
