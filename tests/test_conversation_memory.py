@@ -86,6 +86,9 @@ def orch(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "META_AGENT_ENABLED", False)
     monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(config, "REPOS", {"pagos": str(tmp_path)}, raising=False)
+    # Estos tests comparan el texto de la memoria byte a byte: sin anotar citas ni contexto vivo.
+    monkeypatch.setattr(config, "CITATION_CHECK_ENABLED", False, raising=False)
+    monkeypatch.setattr(config, "LIVE_CONTEXT_ENABLED", False, raising=False)
     monkeypatch.setattr(router_mod.git_tools, "has_pending_changes", lambda path: None)
     monkeypatch.setattr(planner, "_llm_plan", lambda *a, **k: pytest.fail("planner no debía ejecutarse"))
     o = Orchestrator()

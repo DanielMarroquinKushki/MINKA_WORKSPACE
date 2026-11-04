@@ -17,6 +17,9 @@ Uso:
     minka stats [--day YYYY-MM-DD | --month YYYY-MM] [--project P] [--agent A]
     minka evals routing --runs 3 [--json-out r.json]  # solo planner; cuesta tokens
     minka "analiza X" --quiet  # sin la línea final de tokens/costo (stderr)
+    minka "analiza X" --plain  # respuesta sin renderizar Markdown (también MINKA_PLAIN=1;
+                               # sin TTY, --json-out, --quiet y bridge ya salen crudas)
+    minka "analiza X" --completo  # sin el perfil breve de las consultas puntuales
     minka --help
 
 Comandos del modo interactivo:
@@ -37,7 +40,7 @@ from typer.core import TyperGroup
 
 from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
-from minka.core import metrics
+from minka.core import metrics, render
 from minka.core.orchestrator import router
 
 
@@ -214,6 +217,15 @@ def _print_run_summary(orchestrator, quiet: bool) -> None:
             soft_wrap=True,
             style="dim",
         )
+        # Citas de la respuesta verificadas contra REPOS (solo si hubo alguna).
+        if record.get("citations_total"):
+            stderr_console.print(
+                f"{record['citations_total']} citas verificadas, "
+                f"{record.get('citations_missing') or 0} no encontradas",
+                markup=False,
+                highlight=False,
+                style="dim",
+            )
 
 
 @app.callback()
@@ -244,6 +256,11 @@ def main(
         False,
         "--completo",
         help="Fuerza la respuesta completa (sin el perfil breve de las consultas puntuales).",
+    ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="Imprime la respuesta sin renderizar Markdown (equivale a MINKA_PLAIN=1).",
     ),
     index_repos: bool = typer.Option(
         False, "--index-repos", help="Nivel 4: indexar repos en ChromaDB (stub)."
@@ -511,8 +528,13 @@ def main(
         except KeyboardInterrupt:
             console.print("\nSesión terminada. Hasta luego.")
             raise typer.Exit(code=130)
-        # Texto del agente tal cual: sin marcado de Rich (no se come los [...]).
-        console.print(result, markup=False)
+        # Markdown legible solo con TTY y sin --quiet/--json-out/--plain/bridge; si no, el
+        # texto crudo sin marcado de Rich (no se come los [...]). Ver core/render.py.
+        render.print_result(
+            result,
+            console,
+            render=render.should_render(quiet=quiet, json_out=json_out is not None, plain=plain),
+        )
         _print_run_summary(orchestrator, quiet)
         # last_run_ok distingue "corrió y respondió" de "no pudo correr"
         # (p.ej. sesión AWS expirada, que devuelve un string, no una excepción).
@@ -557,7 +579,11 @@ def main(
                     continue
                 # El historial vive en orchestrator.memory: aquí solo viaja el pedido crudo.
                 result = orchestrator.run(user_input, use_llm_planner=not no_llm_planner)
-                console.print(f"\n{result}\n", markup=False)
+                console.print()
+                render.print_result(
+                    result, console, render=render.should_render(quiet=quiet, plain=plain)
+                )
+                console.print()
                 _print_run_summary(orchestrator, quiet)
         except (KeyboardInterrupt, EOFError):
             pass
@@ -633,7 +659,8 @@ def stats(
         f"[dim]router: {routers}     fix-loop: {agg['fix_loop_runs']} corrida(s), "
         f"{agg['fix_loop_iters']} iteraciones     tools repetidas bloqueadas: "
         f"{agg['repeated_tool_calls']}     cierres recortados: {agg['closings_removed']} "
-        f"({agg['ends_with_offer']} respuestas con oferta)[/dim]"
+        f"({agg['ends_with_offer']} respuestas con oferta)     citas no encontradas: "
+        f"{agg['citations_missing']}/{agg['citations_total']}[/dim]"
     )
 
 

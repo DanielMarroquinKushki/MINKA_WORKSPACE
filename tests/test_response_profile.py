@@ -114,12 +114,21 @@ class _FakeAgent:
 REPLY = "El token se resuelve en service/token.go:42.\n\n¿Quieres que revise también el hsm?"
 
 
+def _git_repo(path):
+    import subprocess
+
+    path.mkdir()
+    (path / "main.go").write_text("package main\n")
+    for args in (("init", "-q", "-b", "main"), ("config", "user.email", "t@example.com"),
+                 ("config", "user.name", "t"), ("add", "."), ("commit", "-q", "-m", "init")):
+        subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
+
+
 @pytest.fixture
 def orch(tmp_path, monkeypatch):
     repos = {}
     for name in ("pos", "hsm", "core"):
-        (tmp_path / name).mkdir()
-        (tmp_path / name / "main.go").write_text("package main\n")
+        _git_repo(tmp_path / name)
         repos[name] = str(tmp_path / name)
     monkeypatch.setattr(config, "USE_BEDROCK", False)
     monkeypatch.setattr(config, "EVALUATOR_ENABLED", False)
@@ -192,6 +201,19 @@ def test_respuestas_de_costo_cero_no_tocan_contadores(orch):
     orch.run("hola")
     assert orch.last_router == "small_talk"
     assert (orch.last_ends_with_offer, orch.last_closings_removed) == (False, 0)
+
+
+def test_plantilla_de_forma_solo_en_consultas_tecnicas(orch):
+    """La plantilla viaja en el bloque breve: saludos, aclaraciones y no_changes no corren
+    agente, así que nunca la reciben; la consulta técnica sí."""
+    assert "Forma, solo las partes que apliquen" in rp.BRIEF_BLOCK
+    for req, route in (("hola", "small_talk"), ("¿y en el otro repo?", "ambiguous")):
+        orch.run(req)
+        assert orch.last_router == route and orch.fake_agents == {}, req
+    orch.run("revisa este diff")
+    assert orch.last_router == "no_changes" and orch.fake_agents == {}
+    orch.run("¿dónde se resuelve el token?")
+    assert orch.fake_agents["architecture_agent"].profiles == [rp.PROFILE_BRIEF]
 
 
 # ---------------------------------------------------------------------------

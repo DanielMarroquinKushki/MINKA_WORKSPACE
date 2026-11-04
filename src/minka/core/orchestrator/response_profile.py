@@ -33,7 +33,9 @@ BRIEF_BLOCK = (
     "---\n"
     "Formato de respuesta (consulta puntual): responde directo, en unas 12 líneas como máximo. "
     "Conserva TODAS las citas archivo:línea. Usa tabla solo si comparas opciones. "
-    "No termines ofreciendo más trabajo (nada de \"¿Quieres que…?\")."
+    "No termines ofreciendo más trabajo (nada de \"¿Quieres que…?\").\n"
+    "Forma, solo las partes que apliquen: 1) respuesta directa; 2) evidencia con citas "
+    "archivo:línea; 3) riesgo o salvedad si existe; 4) siguiente paso solo si el pedido lo implica."
 )
 
 BOUNDED_NOTE = "_Respuesta acotada; pide 'en detalle' para ampliar._"

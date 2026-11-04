@@ -10,6 +10,8 @@ DATA_DIR_ENV = f"{APP_NAME.upper()}_HOME"
 # apagado de la línea final de métricas sin cambiar el comando (p.ej. desde el bridge).
 SOURCE_ENV = f"{APP_NAME.upper()}_SOURCE"
 QUIET_ENV = f"{APP_NAME.upper()}_QUIET"
+# Salida sin renderizar Markdown (equivale a --plain); ver core/render.py.
+PLAIN_ENV = f"{APP_NAME.upper()}_PLAIN"
 DIST_NAME = f"{APP_NAME}-workspace"  # nombre de la distribución (pip / uv)
 _INSTALL_PLACEHOLDER = "git+<url-del-repo>"
 

@@ -45,7 +45,12 @@ def ejecuciones(monkeypatch):
 
 def test_cuarta_llamada_identica_se_bloquea(ejecuciones, monkeypatch):
     avisos = []
-    monkeypatch.setattr(base_agent.stderr_console, "print", lambda text, **k: avisos.append(text))
+    # Las líneas "→ Tool" también van a stderr: aquí solo cuentan los avisos de repetición.
+    monkeypatch.setattr(
+        base_agent.stderr_console,
+        "print",
+        lambda text, **k: avisos.append(text) if "→ Tool" not in str(text) else None,
+    )
     agent = _agent()
     results = agent._execute_tools(_response(5))
     assert len(ejecuciones) == 3  # solo las tres primeras se ejecutaron

@@ -20,11 +20,13 @@ from rich.panel import Panel
 
 from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
-from minka.core import metrics
+from minka.core import metrics, render
 from minka.core.memory.conversation_memory import ConversationMemory
-from minka.core.orchestrator import approval_gate, response_profile, router
+from minka.core.memory.live_context import load_live_context, wants_live_context
+from minka.core.orchestrator import approval_gate, citation_check, response_profile, router
 from minka.core.orchestrator.state_manager import StateManager
 from minka.core.schemas import ReviewDecision
+from minka.core.tools.analysis.citations import RepoIndex
 
 console = Console()
 
@@ -83,6 +85,34 @@ class Orchestrator:
         self.last_profile: str = response_profile.PROFILE_FULL
         self.last_ends_with_offer: bool = False
         self.last_closings_removed: int = 0
+        # Citas de la respuesta verificadas contra REPOS (citation_check.py). El índice
+        # de basenames se construye una vez por sesión y se rehace si cambia REPOS.
+        self._repo_index: RepoIndex | None = None
+        self._repo_index_key: tuple | None = None
+        self.last_citations_total: int = 0
+        self.last_citations_missing: int = 0
+        # Contexto vivo del proyecto (live_context.py): foto ÚNICA por sesión, perezosa.
+        self._live_context = None
+        self._live_context_loaded = False
+
+    def _citation_index(self) -> RepoIndex:
+        repos = getattr(config, "REPOS", {}) or {}
+        key = tuple(sorted((k, str(v)) for k, v in repos.items()))
+        if self._repo_index is None or key != self._repo_index_key:
+            self._repo_index = RepoIndex(repos)
+            self._repo_index_key = key
+        return self._repo_index
+
+    def live_context(self):
+        """Contexto vivo del proyecto activo, cargado una sola vez por sesión."""
+        if not self._live_context_loaded:
+            self._live_context = load_live_context(config, getattr(config, "ACTIVE_PROJECT", None))
+            self._live_context_loaded = True
+        return self._live_context
+
+    def _live_block(self) -> str:
+        live = self.live_context()
+        return live.user_block() if live else ""
 
     def clear_session(self) -> None:
         """Olvida el historial de la sesión (REPL /clear)."""
@@ -115,6 +145,13 @@ class Orchestrator:
         result, offered, removed = response_profile.strip_closing_offer(result)
         self.last_ends_with_offer = self.last_ends_with_offer or offered
         self.last_closings_removed += removed
+        # Citas archivo:línea contra REPOS: el texto anotado ("⚠ no existe") es el que se
+        # muestra y el que hereda la memoria, para no repetir una cita falsa como cierta.
+        if result and getattr(config, "CITATION_CHECK_ENABLED", True):
+            checked = citation_check.verify(result, self._citation_index())
+            result = checked.text
+            self.last_citations_total += checked.total
+            self.last_citations_missing += checked.missing
         self.memory.add(request, agents, result, useful)
         return result
 
@@ -228,6 +265,9 @@ class Orchestrator:
         self.last_plan = [name]
         self.state.reset()
         agent.conversation = self.memory.as_messages()
+        console.print(render.dim_line(f"{name} · {request[:80]}"))
+        agent.show_banner = False
+        agent.live_context_block = self._live_block()
         # Forzado (--agent, bridge): siempre completo, sin perfil breve.
         self.last_profile = response_profile.profile_for("forced", name, force_full=True)
         agent.response_profile = self.last_profile
@@ -256,6 +296,8 @@ class Orchestrator:
         self.last_profile = response_profile.PROFILE_FULL
         self.last_ends_with_offer = False
         self.last_closings_removed = 0
+        self.last_citations_total = 0
+        self.last_citations_missing = 0
         started = perf_counter()
         try:
             return self._run(task, use_llm_planner, resume, forced_agent)
@@ -289,6 +331,8 @@ class Orchestrator:
                 planner_retries=getattr(self.last_decision, "retries", 0),
                 ends_with_offer=self.last_ends_with_offer,
                 closings_removed=self.last_closings_removed,
+                citations_total=self.last_citations_total,
+                citations_missing=self.last_citations_missing,
             )
         except Exception:  # noqa: BLE001
             return {}
@@ -321,6 +365,22 @@ class Orchestrator:
         # Un run interrumpido de la MISMA tarea se reanuda tal cual, sin re-enrutar.
         saved = self._load_state() if (resume and not forced_agent) else None
         resuming = bool(saved and saved.get("task") == task)
+
+        # "¿En qué quedamos?" al abrir la sesión: contexto vivo del proyecto, sin modelo
+        # (costo 0). Con turnos previos responde la capa de estado de la sesión (router).
+        if not forced_agent and not resuming and not self.memory.turns and wants_live_context(request):
+            live = self.live_context()
+            stale_days = int(getattr(config, "LIVE_CONTEXT_STALE_DAYS", 7))
+            reply = (
+                live.reply(stale_days)
+                if live
+                else "No hay proyecto activo o el contexto vivo está apagado."
+            )
+            self._apply_decision(
+                router.RouteDecision("live_context", "contexto vivo del proyecto", reply=reply, confidence="alta")
+            )
+            self._record_turn(request, [], useful=False)
+            return reply
 
         # Capas 1 y 4 (costo 0, sin sesión AWS): saludo, estado, meta, ambigüedad.
         decision = None
@@ -385,17 +445,23 @@ class Orchestrator:
             fix_loop_ran = False
         self.last_plan = [step["agent"] for step in plan]
 
-        console.print(
-            Panel(
-                "\n".join(
-                    # Solo el pedido, sin el prefijo de historial que antepone main.py.
-                    f"{i}. [cyan]{s['agent']}[/cyan] — {router.split_request(s['task'])[1][:80]}"
-                    for i, s in enumerate(plan, 1)
-                ),
-                title="Plan de ejecución",
-                border_style="green",
+        if len(plan) == 1:
+            # Plan de un paso: una línea atenuada en vez del panel + banner del agente.
+            console.print(
+                render.dim_line(f"{plan[0]['agent']} · {router.split_request(plan[0]['task'])[1][:80]}")
             )
-        )
+        else:
+            console.print(
+                Panel(
+                    "\n".join(
+                        # Solo el pedido, sin el prefijo de historial que antepone main.py.
+                        f"{i}. [cyan]{s['agent']}[/cyan] — {router.split_request(s['task'])[1][:80]}"
+                        for i, s in enumerate(plan, 1)
+                    ),
+                    title="Plan de ejecución",
+                    border_style="green",
+                )
+            )
 
         for i in range(done, len(plan)):
             step = plan[i]
@@ -432,6 +498,8 @@ class Orchestrator:
                 task_with_ctx = f"{prev}\n\n---\n\nTarea: {step['task']}" if prev else step["task"]
 
                 agent.conversation = self.memory.as_messages()
+                agent.show_banner = len(plan) > 1
+                agent.live_context_block = self._live_block()
                 # Perfil por tipo de pedido: info_direct → breve; lo demás completo.
                 # "en detalle"/"completo" en el pedido, --completo y --debug lo fuerzan.
                 self.last_profile = response_profile.profile_for(
@@ -443,7 +511,8 @@ class Orchestrator:
                 result = agent.run(task_with_ctx)
                 self.state.record_step(step["agent"], step["task"], result)
                 self._record_usage(agent)
-            results.append(f"### [{step['agent']}]\n{result}")
+            # La cabecera `### [agente]` solo aporta con 2+ agentes; la memoria la quita igual.
+            results.append(f"### [{step['agent']}]\n{result}" if len(plan) > 1 else result)
             self._save_state(task, plan, results, i + 1, fix_loop_ran)
 
         self._clear_state()

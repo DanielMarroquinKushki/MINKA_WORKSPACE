@@ -125,6 +125,10 @@ class BaseAgent(ABC):
         self.conversation: list[dict] = []
         # Perfil de concisión de UN run (lo fija el orquestador; ver response_profile.py).
         self.response_profile: str | None = None
+        # Los fija el orquestador por run: banner "recibió tarea" solo en planes de 2+ pasos;
+        # contexto vivo del proyecto como primer bloque del mensaje user (live_context.py).
+        self.show_banner: bool = True
+        self.live_context_block: str = ""
         self.vector_memory = VectorMemory(
             namespace=getattr(config, "ACTIVE_PROJECT", None) or "global"
         )
@@ -202,12 +206,19 @@ class BaseAgent(ABC):
 
     # -- Loop ReAct ------------------------------------------------------------
     def run(self, task: str) -> str:
-        console.print(Panel(f"[bold]{self.name}[/bold] recibió tarea", style="blue"))
+        if getattr(self, "show_banner", True):
+            console.print(Panel(f"[bold]{self.name}[/bold] recibió tarea", style="blue"))
 
         with trace(f"agent:{self.name}", agent=self.name), progress.track(self.name) as prog:
             self._progress = prog
             recalled = self._recall_memories(task)
             user_content = f"{recalled}\n\n{task}" if recalled else task
+            # Contexto vivo del proyecto: primer bloque del mensaje user, nunca en el system.
+            # Un solo uso por run; no entra en _log, _remember ni en la memoria compartida.
+            live = getattr(self, "live_context_block", "") or ""
+            self.live_context_block = ""
+            if live:
+                user_content = f"{live}\n\n---\n\n{user_content}"
             # Perfil breve: bloque al final del mensaje user, nunca en el system (el prefijo
             # cacheado y la línea base de prompts quedan intactos). Un solo uso por run.
             block = response_profile.user_block(getattr(self, "response_profile", None) or "")
@@ -363,7 +374,12 @@ class BaseAgent(ABC):
         for block in response.content:
             if block.type != "tool_use":
                 continue
-            console.print(f"  [dim]→ Tool:[/dim] [cyan]{block.name}[/cyan]")
+            # La línea "→ Tool" va a stderr y nunca con el progreso vivo (que ya muestra la
+            # tool en curso) ni con --quiet: la respuesta en stdout queda limpia.
+            if not progress.enabled() and not (
+                os.getenv(QUIET_ENV) or getattr(self.config, "QUIET", False)
+            ):
+                stderr_console.print(f"  → Tool: {block.name}", style="dim", markup=False)
             if prog is not None:
                 prog.update(status=f"tool {block.name}")
             # Tope de llamadas idénticas (misma tool, mismos argumentos) por corrida:

@@ -62,6 +62,8 @@ def build_run_record(
     planner_retries: int = 0,
     ends_with_offer: bool = False,
     closings_removed: int = 0,
+    citations_total: int = 0,
+    citations_missing: int = 0,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -96,6 +98,9 @@ def build_run_record(
         # Cierre "¿Quieres que…?": si la respuesta lo traía y cuántas líneas se recortaron.
         "ends_with_offer": bool(ends_with_offer),
         "closings_removed": int(closings_removed),
+        # Citas archivo:línea de la respuesta verificadas contra REPOS (citation_check.py).
+        "citations_total": int(citations_total),
+        "citations_missing": int(citations_missing),
         "ok": ok,
         "duration_s": round(duration_s, 3),
         "tokens": {k: totals.get(k) or 0 for k in TOKEN_KEYS},
@@ -171,12 +176,14 @@ def aggregate(
     totals = dict.fromkeys(TOKEN_KEYS, 0)
     cost = base = duration = 0.0
     ok = fix_runs = fix_iters = repeated = 0
-    offers = closings = 0
+    offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
     for r in records:
         repeated += r.get("repeated_tool_calls") or 0
         offers += 1 if r.get("ends_with_offer") else 0
         closings += r.get("closings_removed") or 0
+        cit_total += r.get("citations_total") or 0
+        cit_missing += r.get("citations_missing") or 0
         for u in r.get("per_agent", []):
             name = _short(u.get("agent"))
             if agent and name != agent:
@@ -220,6 +227,8 @@ def aggregate(
         "repeated_tool_calls": repeated,
         "ends_with_offer": offers,
         "closings_removed": closings,
+        "citations_total": cit_total,
+        "citations_missing": cit_missing,
     }
 
 

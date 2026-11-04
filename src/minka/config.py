@@ -122,6 +122,22 @@ PROGRESS_ENABLED = True  # main.py lo apaga con --json-out; core/progress.py tam
 # viajan a cada agente como pares user/assistant y tope de chars del resultado guardado.
 HISTORY_MAX_TURNS = int(os.getenv("HISTORY_MAX_TURNS", "5"))
 HISTORY_RESULT_CHARS = int(os.getenv("HISTORY_RESULT_CHARS", "1500"))
+# Contexto vivo del proyecto (core/memory/live_context.py): <proyecto>.md de
+# ACTIVE_CONTEXT_DIR + última entrada real del session_log, como primer bloque del mensaje
+# user (nunca en el system). ACTIVE_CONTEXT_DIR se sobreescribe en config_local.py cuando el
+# active-context vive fuera del directorio de datos.
+ACTIVE_CONTEXT_DIR = DATA_DIR / "active-context"
+LIVE_CONTEXT_ENABLED = os.getenv("LIVE_CONTEXT_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+LIVE_CONTEXT_MAX_LINES = int(os.getenv("LIVE_CONTEXT_MAX_LINES", "60"))
+LIVE_CONTEXT_MAX_TOKENS = int(os.getenv("LIVE_CONTEXT_MAX_TOKENS", "750"))
+LIVE_CONTEXT_STALE_DAYS = int(os.getenv("LIVE_CONTEXT_STALE_DAYS", "7"))
+# Verificación de citas archivo:línea de la respuesta contra REPOS
+# (core/orchestrator/citation_check.py): anota "⚠ no existe" y cuenta en métricas.
+CITATION_CHECK_ENABLED = os.getenv("CITATION_CHECK_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 # Pregunta de información simple (sin verbo de escritura, fallo ni encadenado) →
 # architecture directo, sin planner: $0 de routing y 100% determinista.
 PLANNER_SKIP_INFO = os.getenv("PLANNER_SKIP_INFO", "true").strip().lower() in ("1", "true", "yes")

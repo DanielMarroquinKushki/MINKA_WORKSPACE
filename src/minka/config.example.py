@@ -26,3 +26,7 @@ REPOS = {
 
 # Opcional: nivel de autonomía. 3 = siempre pide aprobación (recomendado al inicio).
 # AUTONOMY_LEVEL = 3
+
+# Opcional: carpeta con el contexto vivo por proyecto (<proyecto>.md). Por defecto
+# <DATA_DIR>/active-context; descoméntalo si vive en otra parte (p. ej. la raíz del workspace).
+# ACTIVE_CONTEXT_DIR = "~/ruta/al/workspace/active-context"
