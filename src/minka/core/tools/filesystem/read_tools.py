@@ -45,7 +45,7 @@ def read_file(path: str, start_line: int = 1, end_line: int = 0) -> str:
     return numbered or "[archivo vacío o rango sin líneas]"
 
 
-def scan_directory(path: str, max_depth: int = 2, include_ext: str = ".go") -> str:
+def scan_directory(path: str, max_depth: int = 2, include_ext: str | None = None) -> str:
     """
     Lista la estructura de un directorio hasta `max_depth`, filtrando por
     extensión. Excluye vendor/ y node_modules/ (ruido para el análisis).
@@ -53,8 +53,13 @@ def scan_directory(path: str, max_depth: int = 2, include_ext: str = ".go") -> s
     Args:
         path: directorio raíz.
         max_depth: profundidad máxima de recursión.
-        include_ext: extensión a incluir (ej. ".go"). "" = todos.
+        include_ext: extensión a incluir (ej. ".go"). "" = todos. None = la del STACK
+            del proyecto (core/stacks.py; ".go" si no declara ninguno).
     """
+    if include_ext is None:
+        from minka.core import stacks
+
+        include_ext = stacks.profile().ext
     root = Path(path)
     if root.is_file():
         return (
@@ -65,7 +70,9 @@ def scan_directory(path: str, max_depth: int = 2, include_ext: str = ".go") -> s
     if not root.is_dir():
         return f"ERROR: no existe el directorio {path}"
 
-    skip = {"vendor", "node_modules", ".git", ".idea", "__pycache__"}
+    from minka.core import stacks
+
+    skip = {"vendor", "node_modules", ".git", ".idea", "__pycache__", *stacks.profile().skip_dirs}
     out: list[str] = []
 
     def walk(d: Path, depth: int) -> None:
@@ -92,11 +99,16 @@ def scan_directory(path: str, max_depth: int = 2, include_ext: str = ".go") -> s
     return result or "[sin archivos que coincidan]"
 
 
-def list_files(path: str, pattern: str = "*.go") -> str:
+def list_files(path: str, pattern: str | None = None) -> str:
     """
     Lista todas las rutas que coinciden con `pattern` (glob recursivo),
     excluyendo vendor/. Útil para catalogar archivos por tipo.
+    None = glob del STACK del proyecto ("*.go" si no declara ninguno).
     """
+    if pattern is None:
+        from minka.core import stacks
+
+        pattern = stacks.profile().glob
     root = Path(path)
     if root.is_file():
         return (
@@ -107,9 +119,8 @@ def list_files(path: str, pattern: str = "*.go") -> str:
     if not root.is_dir():
         return f"ERROR: no existe el directorio {path}"
 
-    matches = [
-        str(p)
-        for p in root.rglob(pattern)
-        if "vendor" not in p.parts and "node_modules" not in p.parts
-    ]
+    from minka.core import stacks
+
+    skip = {"vendor", "node_modules", *stacks.profile().skip_dirs}
+    matches = [str(p) for p in root.rglob(pattern) if not any(part in skip for part in p.parts)]
     return "\n".join(sorted(matches)) or "[sin coincidencias]"

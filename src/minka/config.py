@@ -83,6 +83,14 @@ REPOS_ROOT: str | None = None
 REPOS_OVERRIDES: dict = {}
 REPOS_SOURCE = "none"
 
+# Stack del proyecto (core/stacks.py): "go" | "python" | "node". None = "go" y esquema
+# viejo. Decide extensiones de código, comando de tests, archivo de dependencias, knowledge
+# profesional por defecto y qué tools exclusivas de Go se registran.
+STACK: str | None = None
+# Cumplimiento opcional, p. ej. ["pci"]: habilita check_pci_compliance y la checklist PCI.
+# None = esquema viejo: ["pci"] solo si STACK también es None; con STACK declarado, [].
+COMPLIANCE: list | None = None
+
 # ---------------------------------------------------------------------------
 # Parametrización por proyecto (Arnés Global)
 # Los valores reales viven en projects/<proyecto>/config.py. Aquí solo hay

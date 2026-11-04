@@ -33,11 +33,17 @@ def run_tests(repo_path: str, repo_name: str, timeout: int = 60) -> TestResult:
     Returns:
         TestResult con resultado completo
     """
+    # Comando de tests del STACK del proyecto (core/stacks.py); Go conserva el de siempre.
+    from minka.core import stacks
+
+    cmd = list(stacks.profile().test_cmd)
+    if stacks.stack_name() == "go":
+        cmd += ["-timeout", f"{timeout}s"]
     start = time.time()
 
     try:
         result = subprocess.run(
-            ["go", "test", "./...", "-v", "-timeout", f"{timeout}s"],
+            cmd,
             cwd=repo_path,
             capture_output=True,
             text=True,

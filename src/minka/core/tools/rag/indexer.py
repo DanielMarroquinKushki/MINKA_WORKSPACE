@@ -48,6 +48,15 @@ def get_or_create_collection(client, name: str = CHROMA_COLLECTION):
     )
 
 
+def _block_patterns() -> tuple:
+    """Patrones de bloque del STACK activo; Go usa _PATTERNS tal cual."""
+    from minka.core import stacks
+
+    if stacks.stack_name() == "go":
+        return tuple(_PATTERNS)
+    return stacks.profile().block_patterns
+
+
 def chunk_go_file(content: str, filepath: Path) -> list[dict]:
     """
     Divide un archivo Go en chunks funcionales:
@@ -67,7 +76,7 @@ def chunk_go_file(content: str, filepath: Path) -> list[dict]:
     start_line = 0
 
     for i, line in enumerate(lines):
-        for pattern, block_type in _PATTERNS:
+        for pattern, block_type in _block_patterns():
             match = re.match(pattern, line)
             if match:
                 if current_chunk and current_name:
@@ -263,7 +272,11 @@ def index_repos(config, only_changed: bool = True) -> dict:
         indexed = _indexed_files(collection, {"repo": repo_name})
         repo_stats = {"files": 0, "chunks": 0, "skipped": 0, "purged": 0, "commit": commit}
 
-        go_files = [f for f in repo_root.rglob("*.go") if "vendor" not in f.parts]
+        # Archivos de código del STACK del proyecto (core/stacks.py): *.go salvo vendor/ por
+        # defecto; *.py, *.ts… cuando el proyecto declara otro stack.
+        from minka.core import stacks
+
+        go_files = list(stacks.code_files(repo_root))
         on_disk = {str(f) for f in go_files}
 
         for go_file in go_files:

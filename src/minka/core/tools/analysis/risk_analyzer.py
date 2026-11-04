@@ -49,9 +49,44 @@ _RULES = [
 ]
 
 
+# Reglas por stack (core/stacks.py). Go conserva _RULES tal cual; las demás son genéricas.
+_RULES_BY_STACK: dict[str, list[tuple]] = {
+    "go": _RULES,
+    "python": [
+        (
+            "EVAL_EXEC",
+            "ALTA",
+            r"\b(eval|exec)\s*\(",
+            "eval()/exec() sobre datos: ejecución de código arbitrario",
+        ),
+        ("BARE_EXCEPT", "MEDIA", r"^\s*except\s*:", "except desnudo: traga cualquier error"),
+        (
+            "SHELL_TRUE",
+            "ALTA",
+            r"subprocess\.\w+\([^)]*shell\s*=\s*True",
+            "subprocess con shell=True: inyección de comandos",
+        ),
+        ("PRIVATE_KEY", "CRÍTICA", r"BEGIN (RSA )?PRIVATE KEY", "Llave privada embebida en el repo"),
+    ],
+    "node": [
+        ("EVAL", "ALTA", r"\beval\s*\(", "eval() sobre datos: ejecución de código arbitrario"),
+        ("NEW_FUNCTION", "ALTA", r"new\s+Function\s*\(", "new Function(): eval encubierto"),
+        (
+            "CHILD_PROCESS_EXEC",
+            "ALTA",
+            r"child_process\)?\.exec\s*\(|\bexec\s*\(\s*`",
+            "exec() de child_process con string: inyección de comandos",
+        ),
+        ("PRIVATE_KEY", "CRÍTICA", r"BEGIN (RSA )?PRIVATE KEY", "Llave privada embebida en el repo"),
+    ],
+}
+
+
 def _rules() -> list[tuple]:
-    """_RULES + config.RISK_PATTERNS: un id existente se reemplaza en su posición."""
-    rules = list(_RULES)
+    """Reglas del STACK activo + config.RISK_PATTERNS: un id existente se reemplaza en su posición."""
+    from minka.core import stacks
+
+    rules = list(_RULES_BY_STACK.get(stacks.stack_name(), _RULES))
     for extra in getattr(config, "RISK_PATTERNS", []):
         idx = next((i for i, r in enumerate(rules) if r[0] == extra[0]), None)
         if idx is None:
@@ -62,9 +97,10 @@ def _rules() -> list[tuple]:
 
 
 def _go_files(root: Path):
-    for f in root.rglob("*.go"):
-        if not any(p in _SKIP for p in f.parts) and "mocks" not in f.parts and f.is_file():
-            yield f
+    """Archivos de código del STACK activo (nombre histórico), sin vendor/mocks/node_modules."""
+    from minka.core import stacks
+
+    yield from stacks.code_files(root, extra_skip=("mocks",))
 
 
 def detect_risks(path: str) -> str:

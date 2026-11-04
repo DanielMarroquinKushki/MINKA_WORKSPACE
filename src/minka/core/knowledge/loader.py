@@ -56,7 +56,15 @@ class KnowledgeLoader:
             bases.append(config.PROJECTS_DIR / project / "knowledge")
         bases.append(config.KNOWLEDGE_DIR)
 
-        wanted = getattr(config, "AGENT_KNOWLEDGE", {}).get(agent_name, [])
+        # Lista explícita del proyecto (aunque sea []) manda; si el agente no aparece en
+        # AGENT_KNOWLEDGE, se usan los defaults del STACK/COMPLIANCE (core/stacks.py).
+        agent_knowledge = getattr(config, "AGENT_KNOWLEDGE", {}) or {}
+        if agent_name in agent_knowledge:
+            wanted = agent_knowledge[agent_name]
+        else:
+            from minka.core import stacks
+
+            wanted = stacks.default_knowledge(agent_name)
         docs: dict[str, str] = {}
         for rel in wanted:
             for base in bases:

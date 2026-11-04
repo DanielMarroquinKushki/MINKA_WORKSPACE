@@ -14,7 +14,16 @@ REPOS = {
     "core": "svc-core",
 }
 
-# Módulo compartido cuya versión se compara entre repos (check_version_drift).
+# Stack del proyecto (core/stacks.py): "go" | "python" | "node". Comentado = "go" con el
+# comportamiento de siempre. Decide extensiones de código, comando de tests, archivo de
+# dependencias, knowledge profesional por defecto y qué tools exclusivas de Go se registran.
+# STACK = "python"
+
+# Cumplimiento opcional: habilita check_pci_compliance y la checklist PCI en el knowledge.
+# Comentado = ["pci"] solo si STACK también está comentado (esquema viejo); con STACK, [].
+# COMPLIANCE = ["pci"]
+
+# Módulo compartido cuya versión se compara entre repos (check_version_drift; solo Go).
 CORE_MODULE_NAME = "<modulo-core>"
 
 # Checklist de cada descripción de PR.
@@ -32,21 +41,15 @@ PR_CHECKLIST = [
 
 # Knowledge por agente (rutas relativas a knowledge/ del proyecto; si un doc
 # no existe en el proyecto, se busca en core/knowledge/ como fallback).
+# Un agente que NO aparece aquí recibe los defaults del STACK (core/stacks.py):
+# hexagonal + patrones para architecture; checklist (+ go_best_practices si STACK=go,
+# + pci_checklist si "pci" en COMPLIANCE) + pilares para development y pr_review.
+# Declara un agente con [] para dejarlo sin knowledge.
 AGENT_KNOWLEDGE = {
-    "architecture_agent": ["professional/hexagonal_architecture.md", "professional/design_patterns.md"],
-    "development_agent": [
-        "professional/go_best_practices.md",
-        "professional/code_review_checklist.md",
-        "team/team_pillars.md",
-    ],
-    "pr_review_agent": [
-        "professional/code_review_checklist.md",
-        "professional/go_best_practices.md",
-        "team/team_pillars.md",
-    ],
-    "debug_agent":        [],
-    "report_agent":       [],
-    "meta_agent":         [],
+    "debug_agent": [],
+    "report_agent": [],
+    "meta_agent": [],
+    # "architecture_agent": ["professional/hexagonal_architecture.md", "extracted/architecture.md"],
 }
 
 # Tools permitidas por agente. Seguridad por diseño: solo development_agent

@@ -56,5 +56,9 @@ def test_proyecto_nuevo_carga_sin_team_pillars(fake_workspace, monkeypatch):
     projects = Path(config.PROJECTS_DIR)
     cfg = config_loader.load_config("mi-proj", projects_dir=projects)
     assert cfg.TEAM_PILLARS == []
-    assert "team/team_pillars.md" in cfg.AGENT_KNOWLEDGE["development_agent"]
+    # La plantilla ya no fija development_agent: hereda los defaults del STACK (core/stacks.py).
+    from minka.core import stacks
+
+    assert "development_agent" not in cfg.AGENT_KNOWLEDGE
+    assert "team/team_pillars.md" in stacks.default_knowledge("development_agent", cfg)
     assert (projects / "mi-proj" / "knowledge" / "team" / "team_pillars.md").is_file()

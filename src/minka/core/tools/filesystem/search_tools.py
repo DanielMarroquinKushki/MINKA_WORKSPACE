@@ -39,15 +39,19 @@ def _python_grep(pattern: str, root: Path, glob: str) -> list[str]:
     return hits
 
 
-def grep_code(pattern: str, path: str, glob: str = "*.go") -> str:
+def grep_code(pattern: str, path: str, glob: str | None = None) -> str:
     """
     Busca un patrón (regex) en los archivos de `path`.
 
     Args:
         pattern: expresión regular.
         path: directorio raíz de búsqueda.
-        glob: patrón de archivos (default *.go).
+        glob: patrón de archivos. None = el del STACK del proyecto ("*.go" por defecto).
     """
+    if glob is None:
+        from minka.core import stacks
+
+        glob = stacks.profile().glob
     root = Path(path)
     if root.is_file():
         return (

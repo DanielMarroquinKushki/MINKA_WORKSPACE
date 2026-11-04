@@ -486,15 +486,38 @@ _ALWAYS_TOOLS = ("list_repos",)
 # accede a escritura/git de commit.
 
 
+def _localize_schema(schema: dict, stacks) -> dict:
+    """Copia del schema con los ejemplos '.go' / '*.go' traducidos al stack activo."""
+    out = {**schema, "description": stacks.localize(schema["description"])}
+    props = {}
+    for key, prop in schema["input_schema"].get("properties", {}).items():
+        prop = dict(prop)
+        if isinstance(prop.get("description"), str):
+            prop["description"] = stacks.localize(prop["description"])
+        props[key] = prop
+    out["input_schema"] = {**schema["input_schema"], "properties": props}
+    return out
+
+
 class ToolRegistry:
     """API estática usada por BaseAgent."""
 
     @staticmethod
     def get_tools_for_agent(agent_name: str) -> list[dict]:
-        """Devuelve los schemas Anthropic de las tools permitidas al agente."""
+        """Devuelve los schemas Anthropic de las tools permitidas al agente.
+
+        Filtra por STACK/COMPLIANCE del proyecto (core/stacks.py): las tools exclusivas de
+        Go solo con STACK=go y las PCI solo con "pci" en COMPLIANCE; los ejemplos '.go' de
+        los schemas se traducen al stack. Con STACK y COMPLIANCE ausentes el resultado es
+        byte a byte el de siempre."""
+        from minka.core import stacks
+
         names = list(getattr(config, "AGENT_TOOLS", {}).get(agent_name, []))
         names += [n for n in _ALWAYS_TOOLS if n not in names]
-        return [_TOOLS[n].to_anthropic() for n in names if n in _TOOLS]
+        schemas = [_TOOLS[n].to_anthropic() for n in names if n in _TOOLS and stacks.tool_allowed(n)]
+        if stacks.stack_name() == "go":
+            return schemas
+        return [_localize_schema(s, stacks) for s in schemas]
 
     @staticmethod
     def get(name: str) -> Callable:
