@@ -95,6 +95,24 @@ def run_gate(mp: pytest.MonkeyPatch, cfg, new_content: str) -> dict:
     return {p["title"]: p for p in out}
 
 
+@pytest.fixture(autouse=True)
+def _sin_inferencia_de_proyecto(request, monkeypatch):
+    """La CLI infiere el proyecto por cwd (core/project_resolver.py); en la suite el cwd es el
+    repo del motor y no hay DEFAULT_PROJECT, así que por defecto se desactiva la inferencia y
+    `--project` sigue funcionando. Los tests marcados `project_inference` usan la real."""
+    if request.node.get_closest_marker("project_inference"):
+        return
+    from minka import main as _main
+
+    def passthrough(explicit, *, debug=False, quiet=False, required=True):
+        if explicit:
+            config_loader.set_project(explicit)
+            config.PROJECT_ORIGIN = "--project"
+        return explicit
+
+    monkeypatch.setattr(_main, "_activate_project", passthrough)
+
+
 @pytest.fixture
 def demo_project(tmp_path, monkeypatch):
     base = tmp_path / "dev-agent"

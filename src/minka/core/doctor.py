@@ -184,11 +184,14 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
     project = getattr(cfg, "ACTIVE_PROJECT", None)
     projects_dir = Path(getattr(cfg, "PROJECTS_DIR", data_dir / "projects"))
     project_ok = bool(project) and (projects_dir / project).is_dir()
+    origin = getattr(cfg, "PROJECT_ORIGIN", None)
     checks.append(
         Check(
             "Proyecto activo",
             project_ok,
-            project if project_ok else ("sin DEFAULT_PROJECT" if not project else f"{project}: carpeta ausente"),
+            (f"{project} (por {origin})" if origin else project)
+            if project_ok
+            else ("sin DEFAULT_PROJECT ni repo del cwd" if not project else f"{project}: carpeta ausente"),
             "Define DEFAULT_PROJECT en config_local.py o crea el proyecto con `minka --new-project <nombre>`.",
         )
     )

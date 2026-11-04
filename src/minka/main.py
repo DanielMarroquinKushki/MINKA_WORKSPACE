@@ -206,6 +206,66 @@ def _print_status(turns: int) -> None:
     console.print(Panel("\n".join(lines), title="Estado del sistema", border_style="cyan"))
 
 
+def _is_tty() -> bool:
+    """Hay un humano al otro lado (stdin y stdout son terminal)."""
+    import sys
+
+    return bool(sys.stdin.isatty() and sys.stdout.isatty())
+
+
+def _activate_project(
+    explicit: str | None, *, debug: bool = False, quiet: bool = False, required: bool = True
+) -> str | None:
+    """Fija el proyecto activo (--project > cwd > DEFAULT_PROJECT) y anuncia su origen.
+
+    Empate: pregunta en TTY, falla con la lista sin TTY (exit 2). Sin proyecto y `required`:
+    exit 2 con la pista de --project / --new-project. Devuelve el nombre o None."""
+    from minka.config_loader import set_project
+    from minka.core import project_resolver
+
+    decision = project_resolver.decide(explicit)
+    if debug:
+        for note in decision.notices:
+            stderr_console.print(f"[dim]aviso: {note}[/dim]")
+    if decision.ambiguous:
+        if _is_tty():
+            console.print("[bold]Este repo pertenece a varios proyectos:[/bold]")
+            for i, name in enumerate(decision.candidates, 1):
+                console.print(f"  {i}. {name}")
+            answer = console.input("¿Cuál uso? (número o nombre): ").strip()
+            picked = None
+            if answer.isdigit() and 1 <= int(answer) <= len(decision.candidates):
+                picked = decision.candidates[int(answer) - 1]
+            elif answer in decision.candidates:
+                picked = answer
+            if not picked:
+                console.print("[red]Sin elección: usa --project <nombre>.[/red]")
+                raise typer.Exit(code=2)
+            decision = project_resolver.Decision(name=picked, origin="elección")
+        else:
+            console.print(
+                "[red]Varios proyectos contienen este directorio: "
+                f"{', '.join(decision.candidates)}. Indica --project <nombre> "
+                "o fija DEFAULT_PROJECT en config_local.py.[/red]"
+            )
+            raise typer.Exit(code=2)
+    if decision.error:
+        if required:
+            console.print(f"[red]{decision.error}[/red]")
+            raise typer.Exit(code=2)
+        return None
+    if decision.name and decision.name != getattr(config, "ACTIVE_PROJECT", None):
+        try:
+            set_project(decision.name)
+        except FileNotFoundError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2)
+    config.PROJECT_ORIGIN = decision.origin
+    if not quiet and not os.getenv(QUIET_ENV):
+        console.print(f"[dim]{decision.label()}[/dim]")
+    return decision.name
+
+
 def _require_rag_enabled() -> None:
     """`--index-repos` / `--index-knowledge` sin RAG: mensaje claro y exit 1, nunca 'ok'."""
     if getattr(config, "RAG_ENABLED", False):
@@ -500,16 +560,16 @@ def main(
         )
     )
 
-    if project:
-        from minka.config_loader import set_project
-
-        try:
-            set_project(project)
-        except FileNotFoundError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1)
-    if getattr(config, "ACTIVE_PROJECT", None):
-        console.print(f"[dim]Proyecto activo: {config.ACTIVE_PROJECT}[/dim]")
+    # Proyecto activo: --project > cwd > DEFAULT_PROJECT (core/project_resolver.py). Los
+    # comandos de mantenimiento (--init, --new-project) no lo necesitan.
+    if not (init or new_project):
+        _activate_project(
+            project,
+            debug=debug,
+            quiet=quiet,
+            # Estos flags toman el proyecto del argumento o validan por su cuenta.
+            required=not (evaluate or optimize_prompt or push_prompts),
+        )
 
     if level:
         config.AUTONOMY_LEVEL = level
@@ -862,14 +922,7 @@ def knowledge_check(
 ):
     from minka.core.tools.analysis import citations
 
-    if project:
-        from minka.config_loader import set_project
-
-        try:
-            set_project(project)
-        except FileNotFoundError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=2)
+    _activate_project(project, quiet=True, required=False)
     active = getattr(config, "ACTIVE_PROJECT", None)
     if not active:
         console.print("[red]No hay proyecto activo: usa --project o DEFAULT_PROJECT.[/red]")
@@ -942,14 +995,8 @@ def doctor_cmd(
 ):
     from minka.core import doctor
 
-    if project:
-        from minka.config_loader import set_project
-
-        try:
-            set_project(project)
-        except FileNotFoundError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=2)
+    # --project > cwd > DEFAULT_PROJECT; sin ninguno el doctor igual corre y lo marca en ✗.
+    _activate_project(project, quiet=True, required=False)
     checks = doctor.run_checks(config)
     console.print(doctor.format_report(checks), markup=False, highlight=False)
     if doctor.has_critical_failure(checks):

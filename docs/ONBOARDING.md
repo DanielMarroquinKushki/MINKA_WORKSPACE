@@ -25,10 +25,17 @@ minka --new-project mi-proyecto --repo api=~/code/svc-api --repo core=~/code/svc
 #    interactivo (pregunta repos, stack y si aplica PCI):  minka --new-project mi-proyecto
 #    sin preguntas para scripts:  … --stack python --compliance pci --yes
 
-# 4. Verificar y empezar
-minka doctor --project mi-proyecto
-minka --project mi-proyecto "¿dónde se resuelve el token en el repo api?"
+# 4. Verificar y empezar (dentro de un repo del proyecto no hace falta --project:
+#    minka infiere el proyecto por el directorio actual y lo anuncia "(por cwd)")
+cd ~/code/svc-api
+minka doctor
+minka "¿dónde se resuelve el token en el repo api?"
 ```
+
+Orden de resolución del proyecto activo: `--project` > directorio actual (el repo donde
+estás, también por symlink) > `DEFAULT_PROJECT` de `config_local.py`. Si el repo pertenece a
+dos proyectos y ninguno es el default, minka pregunta en terminal y falla con la lista en
+scripts; el bridge exige siempre `--project`.
 
 Notas: Bedrock requiere `minka-sso` una vez (perfil SSO); API directa, `ANTHROPIC_API_KEY`
 en `<DATA_DIR>/.env` y `LLM_BACKEND=anthropic`. Si todos los repos comparten carpeta,

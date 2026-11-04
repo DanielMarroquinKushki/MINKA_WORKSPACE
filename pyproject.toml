@@ -59,4 +59,5 @@ known-first-party = ["minka"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]      # layout src/: los tests importan `minka.*` (la instalación real es el 5.6)
 testpaths = ["tests"]
+markers = ["project_inference: usa la inferencia real del proyecto por cwd (conftest la desactiva por defecto)"]
 addopts = "-q -p no:deepeval"
