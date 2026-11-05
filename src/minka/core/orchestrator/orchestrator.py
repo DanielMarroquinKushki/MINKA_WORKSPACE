@@ -23,7 +23,13 @@ from minka.config_loader import config
 from minka.core import metrics, render
 from minka.core.memory.conversation_memory import ConversationMemory
 from minka.core.memory.live_context import load_live_context, wants_live_context
-from minka.core.orchestrator import approval_gate, citation_check, response_profile, router
+from minka.core.orchestrator import (
+    approval_gate,
+    citation_check,
+    claim_check,
+    response_profile,
+    router,
+)
 from minka.core.orchestrator.state_manager import StateManager
 from minka.core.schemas import ReviewDecision
 from minka.core.tools.analysis.citations import RepoIndex
@@ -91,10 +97,32 @@ class Orchestrator:
         self._repo_index_key: tuple | None = None
         self.last_citations_total: int = 0
         self.last_response_lines: int = 0
+        self.last_claims: dict = self._empty_claims()
         self.last_citations_missing: int = 0
         # Contexto vivo del proyecto (live_context.py): foto ÚNICA por sesión, perezosa.
         self._live_context = None
         self._live_context_loaded = False
+
+    @staticmethod
+    def _empty_claims() -> dict:
+        return {"checked": 0, "unsupported": 0, "blocks_proposed": 0, "truncated": 0}
+
+    def _verify_claims(self, result: str, request: str, agent) -> str:
+        """Gancho por paso (claim_check.py): anota "⚠ sin respaldo" y la salida cortada, y
+        acumula contadores. El respaldo es el pedido + los pasos previos del plan + REPOS."""
+        if not result or not getattr(config, "VERIFY_CLAIMS_ENABLED", True):
+            return result
+        try:
+            previous = [request, *(s.get("result") or "" for s in self.state.steps)]
+            truncated = bool((getattr(agent, "last_usage", None) or {}).get("truncated"))
+            checked = claim_check.verify(result, self._citation_index(), previous, truncated=truncated)
+        except Exception:  # noqa: BLE001 — el verificador nunca rompe la respuesta
+            return result
+        self.last_claims["checked"] += checked.checked
+        self.last_claims["unsupported"] += checked.unsupported
+        self.last_claims["blocks_proposed"] += checked.blocks_proposed
+        self.last_claims["truncated"] += 1 if truncated else 0
+        return checked.text
 
     def _citation_index(self) -> RepoIndex:
         repos = getattr(config, "REPOS", {}) or {}
@@ -252,6 +280,7 @@ class Orchestrator:
                 "cache_creation_1h",
                 "repeated_tool_calls",
                 "iterations_capped",
+                "truncated",
             ):
                 totals[key] = totals.get(key, 0) + usage.get(key, 0)
         except Exception:  # noqa: BLE001 — métricas best-effort
@@ -285,6 +314,7 @@ class Orchestrator:
         self.last_profile = response_profile.profile_for("forced", name, force_full=True)
         agent.response_profile = self.last_profile
         result = agent.run(task)
+        result = self._verify_claims(result, request, agent)
         self.state.record_step(name, task, result)
         self._record_usage(agent)
         return self._record_turn(request, [name], router.is_useful_result(result), result)
@@ -312,6 +342,7 @@ class Orchestrator:
         self.last_citations_total = 0
         self.last_citations_missing = 0
         self.last_response_lines = 0
+        self.last_claims = self._empty_claims()
         started = perf_counter()
         try:
             return self._run(task, use_llm_planner, resume, forced_agent)
@@ -349,6 +380,7 @@ class Orchestrator:
                 citations_missing=self.last_citations_missing,
                 prompt_hash=self._prompt_hash(),
                 response_lines=self.last_response_lines,
+                claims=self.last_claims,
             )
         except Exception:  # noqa: BLE001
             return {}
@@ -509,8 +541,11 @@ class Orchestrator:
                 fix_loop_ran = True
             else:
                 agent = self._get_agent(step["agent"])
-                # Inyecta contexto de pasos previos si hay varios steps.
-                prev = self.state.context_for_next()
+                # Inyecta el resultado completo de los pasos previos (tope CONTEXT_NEXT_MAX_CHARS).
+                prev = self.state.context_for_next(getattr(config, "CONTEXT_NEXT_MAX_CHARS", None))
+                if self.state.last_truncated_steps and not self.quiet:
+                    cut = ", ".join(str(i) for i in self.state.last_truncated_steps)
+                    console.print(render.dim_line(f"contexto del paso {cut} recortado a CONTEXT_NEXT_MAX_CHARS"))
                 task_with_ctx = f"{prev}\n\n---\n\nTarea: {step['task']}" if prev else step["task"]
 
                 agent.conversation = self.memory.as_messages()
@@ -527,6 +562,7 @@ class Orchestrator:
                 )
                 agent.response_profile = self.last_profile
                 result = agent.run(task_with_ctx)
+                result = self._verify_claims(result, request, agent)
                 self.state.record_step(step["agent"], step["task"], result)
                 self._record_usage(agent)
             # La cabecera `### [agente]` solo aporta con 2+ agentes; la memoria la quita igual.

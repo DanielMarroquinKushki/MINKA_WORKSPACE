@@ -6,7 +6,8 @@ Perfiles (los decide el orquestador a partir del router, nunca el agente):
   exploratorio planner (router llm) con plan de solo architecture_agent: resumen de 5 a 10
                líneas con la conclusión y luego "Evidencia" con las citas clave archivo:línea.
   completo     investigación multi-agente, agente forzado (--agent, bridge), fix-loop, resume.
-  reporte      report_agent: conserva su formato propio.
+  reporte      report_agent: redacta solo sobre el resultado previo (o lo leído con sus tools),
+               sin código ni cifras que no estén ahí, "sin evidencia" donde falte, ~60 líneas.
 
 El perfil viaja como bloque al final del mensaje `user` del agente, nunca en el system:
 así el prefijo cacheado (tools + system) y la línea base de prompts quedan byte-idénticos.
@@ -52,6 +53,15 @@ EXPLORE_BLOCK = (
     "No termines ofreciendo más trabajo (nada de \"¿Quieres que…?\")."
 )
 
+REPORT_BLOCK = (
+    "---\n"
+    "Formato de reporte: redacta SOLO sobre el resultado de los pasos previos de este plan y, si "
+    "no lo hay, sobre lo que leas con tus tools en esta corrida. No incluyas bloques de código, "
+    "identificadores ni cifras (fechas, ids, KCV, plazos) que no aparezcan ahí; donde falte el dato "
+    "escribe \"sin evidencia\". Conserva las citas archivo:línea que ya vengan. Máximo unas 60 "
+    "líneas. No termines ofreciendo más trabajo (nada de \"¿Quieres que…?\")."
+)
+
 BOUNDED_NOTE = "_Respuesta acotada; pide 'en detalle' para ampliar._"
 BOUNDED_PROFILES = (PROFILE_BRIEF, PROFILE_EXPLORE)
 
@@ -87,11 +97,13 @@ def profile_for(
 
 
 def user_block(profile: str) -> str:
-    """Texto que se añade al mensaje user; vacío salvo en los perfiles breve y exploratorio."""
+    """Texto que se añade al mensaje user; vacío en el perfil completo."""
     if profile == PROFILE_BRIEF:
         return BRIEF_BLOCK
     if profile == PROFILE_EXPLORE:
         return EXPLORE_BLOCK
+    if profile == PROFILE_REPORT:
+        return REPORT_BLOCK
     return ""
 
 

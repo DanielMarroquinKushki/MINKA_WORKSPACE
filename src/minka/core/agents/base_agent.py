@@ -184,6 +184,8 @@ class BaseAgent(ABC):
             "repeated_tool_calls": 0,
             # 1 si la corrida llegó a la vuelta tope-1 y se le pidió la respuesta final.
             "iterations_capped": 0,
+            # 1 si la respuesta final se cortó por MAX_TOKENS (stop_reason max_tokens).
+            "truncated": 0,
             # Una entrada por respuesta del modelo: tokens de la vuelta y, si hubo tool_use,
             # `tools` = [{name, args}] con rutas, rangos y patrones (nunca lo que devolvieron).
             "per_iteration": [],
@@ -299,6 +301,8 @@ class BaseAgent(ABC):
                     continue
 
                 # end_turn u otro → respuesta final
+                if response.stop_reason == "max_tokens":
+                    self.last_usage["truncated"] = 1
                 result = self._extract_text(response)
                 self._remember(task, result)
                 self._log(task, result)

@@ -882,7 +882,9 @@ def stats(
         f"{agg['repeated_tool_calls']}     vueltas con tope: {agg['iterations_capped']}     "
         f"cierres recortados: {agg['closings_removed']} "
         f"({agg['ends_with_offer']} respuestas con oferta)     citas no encontradas: "
-        f"{agg['citations_missing']}/{agg['citations_total']}[/dim]"
+        f"{agg['citations_missing']}/{agg['citations_total']}     afirmaciones sin respaldo: "
+        f"{agg['claims_unsupported']}/{agg['claims_checked']} (bloques propuestos {agg['blocks_proposed']})"
+        f"     salidas cortadas: {agg['truncated_outputs']}[/dim]"
     )
     hashes = agg.get("prompt_hashes") or {}
     if hashes:

@@ -44,7 +44,7 @@ def test_wants_full_detecta_en_detalle_y_completo():
 def test_user_block_solo_en_breve():
     assert "citas archivo:línea" in rp.user_block(rp.PROFILE_BRIEF)
     assert rp.user_block(rp.PROFILE_FULL) == ""
-    assert rp.user_block(rp.PROFILE_REPORT) == ""
+    assert "resultado de los pasos previos" in rp.user_block(rp.PROFILE_REPORT)
     assert rp.user_block("") == ""
 
 

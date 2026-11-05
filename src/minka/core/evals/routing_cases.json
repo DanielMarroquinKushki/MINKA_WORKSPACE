@@ -283,7 +283,7 @@
         "router": "llm",
         "llm_called": true,
         "line_contains": [
-          "regla: report exige pedir un reporte o un resultado previo → architecture"
+          "regla: report exige pedir un reporte o un resultado previo → paso eliminado"
         ]
       }
     },

@@ -388,7 +388,12 @@ def local_decision(
             session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS
         )
     # Pregunta de información simple → architecture directo, sin planner (PLANNER_SKIP_INFO).
-    if getattr(config, "PLANNER_SKIP_INFO", True) and is_simple_info_question(request):
+    # Un pedido de reporte va al planner aunque traiga palabras de información.
+    if (
+        getattr(config, "PLANNER_SKIP_INFO", True)
+        and is_simple_info_question(request)
+        and not asks_report(request)
+    ):
         return RouteDecision(
             "info_direct",
             "consulta de información, directo",
@@ -426,7 +431,9 @@ def _fallback_decision(
 def apply_hard_rules(
     steps: list[dict], request: str, has_prev_result: bool, repos: dict | None = None
 ) -> tuple[list[dict], list[str]]:
-    """Cada agente exige su evidencia en el pedido; si falta, el paso pasa a architecture."""
+    """Cada agente exige su evidencia en el pedido; si falta, el paso pasa a architecture.
+    Excepción: un report_agent sin pedido de reporte ni resultado previo se ELIMINA del plan
+    (no se convierte en análisis); si el plan queda vacío, cae a architecture."""
     rules = {
         "development_agent": (
             lambda: has_write_verb(request) and has_code_reference(request, repos),
@@ -450,12 +457,18 @@ def apply_hard_rules(
     for step in steps:
         agent = step["agent"]
         rule = rules.get(agent)
+        if agent == "report_agent" and rule and not rule[0]():
+            notices.append(f"regla: {rule[1]} → paso eliminado")
+            continue
         if rule and not rule[0]():
             notices.append(f"regla: {rule[1]} → architecture")
             agent = "architecture_agent"
         if out and agent == "architecture_agent" and out[-1]["agent"] == agent:
             continue  # dos análisis seguidos sobre el mismo pedido no suman
         out.append({**step, "agent": agent})
+    if steps and not out:
+        notices.append("regla: plan sin pasos válidos → architecture")
+        out.append({**steps[0], "agent": "architecture_agent"})
     return out, notices
 
 

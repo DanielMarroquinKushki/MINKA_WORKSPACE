@@ -66,6 +66,7 @@ def build_run_record(
     citations_missing: int = 0,
     prompt_hash: str | None = None,
     response_lines: int = 0,
+    claims: dict | None = None,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -108,6 +109,12 @@ def build_run_record(
         "citations_missing": int(citations_missing),
         # Líneas de la respuesta mostrada (número, nunca el texto).
         "response_lines": int(response_lines),
+        # Verificador de afirmaciones (claim_check.py): comprobadas, sin respaldo, bloques
+        # marcados como propuesta y respuestas cortadas por MAX_TOKENS.
+        "claims_checked": int((claims or {}).get("checked") or 0),
+        "claims_unsupported": int((claims or {}).get("unsupported") or 0),
+        "blocks_proposed": int((claims or {}).get("blocks_proposed") or 0),
+        "truncated_outputs": int((claims or {}).get("truncated") or 0),
         # Huella de prompts + tools + modelos (core/baseline.py): misma línea base ⇔ mismo hash.
         "prompt_hash": prompt_hash,
         "ok": ok,
@@ -185,12 +192,17 @@ def aggregate(
     totals = dict.fromkeys(TOKEN_KEYS, 0)
     cost = base = duration = 0.0
     ok = fix_runs = fix_iters = repeated = capped = 0
+    claims_checked = claims_unsupported = blocks_proposed = truncated_outputs = 0
     offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
     prompt_hashes: Counter = Counter()
     for r in records:
         repeated += r.get("repeated_tool_calls") or 0
         capped += r.get("iterations_capped") or 0
+        claims_checked += r.get("claims_checked") or 0
+        claims_unsupported += r.get("claims_unsupported") or 0
+        blocks_proposed += r.get("blocks_proposed") or 0
+        truncated_outputs += r.get("truncated_outputs") or 0
         if r.get("prompt_hash"):
             prompt_hashes[r["prompt_hash"]] += 1
         offers += 1 if r.get("ends_with_offer") else 0
@@ -239,6 +251,10 @@ def aggregate(
         "fix_loop_iters": fix_iters,
         "repeated_tool_calls": repeated,
         "iterations_capped": capped,
+        "claims_checked": claims_checked,
+        "claims_unsupported": claims_unsupported,
+        "blocks_proposed": blocks_proposed,
+        "truncated_outputs": truncated_outputs,
         "ends_with_offer": offers,
         "closings_removed": closings,
         "citations_total": cit_total,

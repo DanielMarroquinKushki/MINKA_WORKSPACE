@@ -161,6 +161,12 @@ TOOL_REPEAT_LIMIT = int(os.getenv("TOOL_REPEAT_LIMIT", "3"))
 # Tope de vueltas del architecture_agent por corrida (core/agents/base_agent.py): en la vuelta
 # tope-1 se le pide la respuesta final con lo recogido; la corrida cuenta en iterations_capped.
 ARCH_MAX_ITERATIONS = int(os.getenv("ARCH_MAX_ITERATIONS", "8"))
+# Plan de varios pasos: cuántos caracteres del resultado de cada paso previo ve el siguiente
+# agente (state_manager.context_for_next). Si se recorta, se avisa en la línea de decisión.
+CONTEXT_NEXT_MAX_CHARS = int(os.getenv("CONTEXT_NEXT_MAX_CHARS", "12000"))
+# Verificador determinista de afirmaciones (core/orchestrator/claim_check.py): identificadores
+# en backticks, bloques de código y cifras contra REPOS y el resultado previo; anota "⚠ sin respaldo".
+VERIFY_CLAIMS_ENABLED = os.getenv("VERIFY_CLAIMS_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 AUTO_COMMIT = False  # True solo en Nivel 5+
 AUTO_BRANCH = True  # Siempre crea rama antes de escribir
 BRANCH_PREFIX = "agent/"
