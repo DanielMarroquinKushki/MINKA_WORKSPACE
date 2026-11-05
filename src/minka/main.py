@@ -879,7 +879,8 @@ def stats(
     console.print(
         f"[dim]router: {routers}     fix-loop: {agg['fix_loop_runs']} corrida(s), "
         f"{agg['fix_loop_iters']} iteraciones     tools repetidas bloqueadas: "
-        f"{agg['repeated_tool_calls']}     cierres recortados: {agg['closings_removed']} "
+        f"{agg['repeated_tool_calls']}     vueltas con tope: {agg['iterations_capped']}     "
+        f"cierres recortados: {agg['closings_removed']} "
         f"({agg['ends_with_offer']} respuestas con oferta)     citas no encontradas: "
         f"{agg['citations_missing']}/{agg['citations_total']}[/dim]"
     )

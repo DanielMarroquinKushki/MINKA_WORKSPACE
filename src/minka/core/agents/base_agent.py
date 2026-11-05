@@ -114,6 +114,33 @@ def resolve_model_id(model_id: str) -> str:
     return f"{prefix}{base}"
 
 
+# Bloque user de la penúltima vuelta (ARCH_MAX_ITERATIONS): respuesta con lo recogido.
+FINAL_TURN_BLOCK = (
+    "---\n"
+    "Última vuelta: responde ahora con lo recogido y conserva todas las citas archivo:línea. "
+    "No llames más herramientas."
+)
+ITERATIONS_EXHAUSTED = "Máximo de iteraciones alcanzado sin respuesta final."
+# Argumentos de tools que se registran en usage.per_iteration[].tools: rutas, rangos y
+# patrones. Nunca contenido (write_file, etc.) ni lo que la tool devolvió.
+TOOL_LOG_ARGS = (
+    "path", "start_line", "end_line", "pattern", "glob", "query", "symbol", "name",
+    "repo_filter", "n_results", "collection", "max_depth", "include_ext",
+)
+
+
+def _tool_log_entry(name: str, args: dict, blocked: bool = False) -> dict:
+    kept = {}
+    for key in TOOL_LOG_ARGS:
+        if key in args:
+            value = args[key]
+            kept[key] = value if isinstance(value, (int, float, bool)) else str(value)[:200]
+    entry = {"name": name, "args": kept}
+    if blocked:
+        entry["blocked"] = True
+    return entry
+
+
 class BaseAgent(ABC):
     def __init__(self, name: str):
         self.name = name
@@ -155,7 +182,10 @@ class BaseAgent(ABC):
             "cache_creation_1h": 0,
             # Llamadas idénticas a una tool bloqueadas por TOOL_REPEAT_LIMIT.
             "repeated_tool_calls": 0,
-            # Una entrada por respuesta del modelo: cómo evoluciona el caché vuelta a vuelta.
+            # 1 si la corrida llegó a la vuelta tope-1 y se le pidió la respuesta final.
+            "iterations_capped": 0,
+            # Una entrada por respuesta del modelo: tokens de la vuelta y, si hubo tool_use,
+            # `tools` = [{name, args}] con rutas, rangos y patrones (nunca lo que devolvieron).
             "per_iteration": [],
         }
 
@@ -259,6 +289,11 @@ class BaseAgent(ABC):
 
                 if response.stop_reason == "tool_use":
                     tool_results = self._execute_tools(response)
+                    if self.iteration_count == self.max_iterations - 1:
+                        # Penúltima vuelta: la siguiente debe ser la respuesta, con lo recogido.
+                        tool_results.append({"type": "text", "text": FINAL_TURN_BLOCK})
+                        self.last_usage["iterations_capped"] = 1
+                        self._warn_iteration_cap()
                     messages.append({"role": "assistant", "content": response.content})
                     messages.append({"role": "user", "content": tool_results})
                     continue
@@ -269,7 +304,21 @@ class BaseAgent(ABC):
                 self._log(task, result)
                 return result
 
-            return "Máximo de iteraciones alcanzado sin respuesta final."
+            # Agotó las vueltas pidiendo tools: se entrega el texto que acompañara a la última.
+            result = self._extract_text(response) or ITERATIONS_EXHAUSTED
+            self._log(task, result)
+            return result
+
+    def _warn_iteration_cap(self) -> None:
+        if getattr(self.config, "QUIET", False) or os.getenv(QUIET_ENV):
+            return
+        stderr_console.print(
+            f"⚠ {self.name}: vuelta {self.iteration_count} de {self.max_iterations}; "
+            "pido la respuesta final con lo recogido.",
+            markup=False,
+            highlight=False,
+            style="yellow",
+        )
 
     # -- Helpers ---------------------------------------------------------------
     def _recall_memories(self, task: str) -> str:
@@ -366,6 +415,7 @@ class BaseAgent(ABC):
 
     def _execute_tools(self, response) -> list:
         results = []
+        logged = []
         seen = getattr(self, "_tool_calls_seen", None)
         if seen is None:
             seen = self._tool_calls_seen = Counter()
@@ -386,6 +436,7 @@ class BaseAgent(ABC):
             # corta los loops en que el modelo repite la misma lectura.
             key = (block.name, json.dumps(dict(block.input), sort_keys=True, default=str))
             seen[key] += 1
+            logged.append(_tool_log_entry(block.name, dict(block.input), blocked=limit and seen[key] > limit))
             if limit and seen[key] > limit:
                 self.last_usage["repeated_tool_calls"] = (
                     self.last_usage.get("repeated_tool_calls", 0) + 1
@@ -445,6 +496,10 @@ class BaseAgent(ABC):
                         "is_error": True,
                     }
                 )
+        # Se cuelga de la vuelta que pidió las tools (la última entrada de per_iteration).
+        usage = getattr(self, "last_usage", None)
+        if logged and usage and usage.get("per_iteration"):
+            usage["per_iteration"][-1]["tools"] = logged
         return results
 
     def _extract_text(self, response) -> str:

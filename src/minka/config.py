@@ -158,6 +158,9 @@ CITATION_CHECK_ENABLED = os.getenv("CITATION_CHECK_ENABLED", "true").strip().low
 PLANNER_SKIP_INFO = os.getenv("PLANNER_SKIP_INFO", "true").strip().lower() in ("1", "true", "yes")
 # Veces que una misma tool con los mismos argumentos puede ejecutarse por corrida.
 TOOL_REPEAT_LIMIT = int(os.getenv("TOOL_REPEAT_LIMIT", "3"))
+# Tope de vueltas del architecture_agent por corrida (core/agents/base_agent.py): en la vuelta
+# tope-1 se le pide la respuesta final con lo recogido; la corrida cuenta en iterations_capped.
+ARCH_MAX_ITERATIONS = int(os.getenv("ARCH_MAX_ITERATIONS", "8"))
 AUTO_COMMIT = False  # True solo en Nivel 5+
 AUTO_BRANCH = True  # Siempre crea rama antes de escribir
 BRANCH_PREFIX = "agent/"

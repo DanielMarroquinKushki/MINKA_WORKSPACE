@@ -90,6 +90,7 @@ class Orchestrator:
         self._repo_index: RepoIndex | None = None
         self._repo_index_key: tuple | None = None
         self.last_citations_total: int = 0
+        self.last_response_lines: int = 0
         self.last_citations_missing: int = 0
         # Contexto vivo del proyecto (live_context.py): foto ÚNICA por sesión, perezosa.
         self._live_context = None
@@ -162,6 +163,7 @@ class Orchestrator:
             result = checked.text
             self.last_citations_total += checked.total
             self.last_citations_missing += checked.missing
+        self.last_response_lines = len(result.splitlines()) if result else 0
         self.memory.add(request, agents, result, useful)
         return result
 
@@ -249,6 +251,7 @@ class Orchestrator:
                 "cache_creation_5m",
                 "cache_creation_1h",
                 "repeated_tool_calls",
+                "iterations_capped",
             ):
                 totals[key] = totals.get(key, 0) + usage.get(key, 0)
         except Exception:  # noqa: BLE001 — métricas best-effort
@@ -308,6 +311,7 @@ class Orchestrator:
         self.last_closings_removed = 0
         self.last_citations_total = 0
         self.last_citations_missing = 0
+        self.last_response_lines = 0
         started = perf_counter()
         try:
             return self._run(task, use_llm_planner, resume, forced_agent)
@@ -344,6 +348,7 @@ class Orchestrator:
                 citations_total=self.last_citations_total,
                 citations_missing=self.last_citations_missing,
                 prompt_hash=self._prompt_hash(),
+                response_lines=self.last_response_lines,
             )
         except Exception:  # noqa: BLE001
             return {}
@@ -511,12 +516,14 @@ class Orchestrator:
                 agent.conversation = self.memory.as_messages()
                 agent.show_banner = len(plan) > 1
                 agent.live_context_block = self._live_block()
-                # Perfil por tipo de pedido: info_direct → breve; lo demás completo.
-                # "en detalle"/"completo" en el pedido, --completo y --debug lo fuerzan.
+                # Perfil por tipo de pedido: info_direct → breve; planner con plan de solo
+                # architecture → exploratorio; lo demás completo. "en detalle"/"completo"
+                # en el pedido, --completo y --debug fuerzan el completo.
                 self.last_profile = response_profile.profile_for(
                     self.last_router,
                     step["agent"],
                     force_full=self.force_full or response_profile.wants_full(request),
+                    plan_agents=[s["agent"] for s in plan],
                 )
                 agent.response_profile = self.last_profile
                 result = agent.run(task_with_ctx)

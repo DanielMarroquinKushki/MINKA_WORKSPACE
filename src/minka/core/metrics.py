@@ -65,6 +65,7 @@ def build_run_record(
     citations_total: int = 0,
     citations_missing: int = 0,
     prompt_hash: str | None = None,
+    response_lines: int = 0,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -73,6 +74,7 @@ def build_run_record(
         entry = {"agent": u.get("agent"), "model": u.get("model")}
         entry.update({k: u.get(k) or 0 for k in TOKEN_KEYS})
         entry["repeated_tool_calls"] = u.get("repeated_tool_calls") or 0
+        entry["iterations_capped"] = u.get("iterations_capped") or 0
         per_agent.append(entry)
         c = cost_usd(u)
         if c is None:
@@ -94,6 +96,8 @@ def build_run_record(
         "reasoning": reasoning,
         "planner_retries": planner_retries,
         "repeated_tool_calls": sum(e["repeated_tool_calls"] for e in per_agent),
+        # Agentes que llegaron al tope de vueltas y respondieron con lo recogido.
+        "iterations_capped": sum(e["iterations_capped"] for e in per_agent),
         "plan": list(plan),
         "fix_loop_iters": fix_loop_iters,
         # Cierre "¿Quieres que…?": si la respuesta lo traía y cuántas líneas se recortaron.
@@ -102,6 +106,8 @@ def build_run_record(
         # Citas archivo:línea de la respuesta verificadas contra REPOS (citation_check.py).
         "citations_total": int(citations_total),
         "citations_missing": int(citations_missing),
+        # Líneas de la respuesta mostrada (número, nunca el texto).
+        "response_lines": int(response_lines),
         # Huella de prompts + tools + modelos (core/baseline.py): misma línea base ⇔ mismo hash.
         "prompt_hash": prompt_hash,
         "ok": ok,
@@ -178,12 +184,13 @@ def aggregate(
     costs: dict[str, list[float]] = {}
     totals = dict.fromkeys(TOKEN_KEYS, 0)
     cost = base = duration = 0.0
-    ok = fix_runs = fix_iters = repeated = 0
+    ok = fix_runs = fix_iters = repeated = capped = 0
     offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
     prompt_hashes: Counter = Counter()
     for r in records:
         repeated += r.get("repeated_tool_calls") or 0
+        capped += r.get("iterations_capped") or 0
         if r.get("prompt_hash"):
             prompt_hashes[r["prompt_hash"]] += 1
         offers += 1 if r.get("ends_with_offer") else 0
@@ -231,6 +238,7 @@ def aggregate(
         "fix_loop_runs": fix_runs,
         "fix_loop_iters": fix_iters,
         "repeated_tool_calls": repeated,
+        "iterations_capped": capped,
         "ends_with_offer": offers,
         "closings_removed": closings,
         "citations_total": cit_total,
