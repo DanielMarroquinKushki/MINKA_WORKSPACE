@@ -23,6 +23,8 @@ from pathlib import Path
 from minka.core.tools.analysis import citations as cit
 
 MARK_UNSUPPORTED = "⚠ sin respaldo"
+MARK_DOC = "(doc"
+MARK_DOC_BLOCK = "_(doc)_"
 MARK_PROPOSED = "_(propuesto)_"
 MARK_TRUNCATED = "_⚠ Respuesta cortada por tope de tokens (MAX_TOKENS)._"
 
@@ -68,6 +70,7 @@ class ClaimResult:
     blocks_unsupported: int = 0
     blocks_proposed: int = 0
     truncated: bool = False
+    doc_supported: int = 0  # respaldados solo por el knowledge del proyecto
     unsupported_tokens: list[str] = field(default_factory=list)
 
     @property
@@ -79,32 +82,50 @@ class ClaimResult:
         return self.identifiers_unsupported + self.numbers_unsupported + self.blocks_unsupported
 
 
-class Evidence:
-    """Respaldo: textos previos (pedido + pasos anteriores) y grep literal en los repos."""
+SUPPORT_PREV, SUPPORT_REPO, SUPPORT_DOC = "prev", "repo", "doc"
 
-    def __init__(self, index: cit.RepoIndex | None, previous: list[str]):
+
+class Evidence:
+    """Respaldo: pedido + pasos previos, grep literal en los repos (exacto y luego sin
+    distinguir mayúsculas: `workingKey` cuenta si el código tiene `WorkingKey`) y, en último
+    lugar, el knowledge del proyecto (extracted + learning), que se marca "(doc)"."""
+
+    def __init__(self, index: cit.RepoIndex | None, previous: list[str], docs: str = ""):
         self.roots = list(index.roots.values()) if index is not None else []
         self.previous = "\n".join(p for p in previous if p)
-        self._cache: dict[str, bool] = {}
+        self.docs = docs or ""
+        self.docs_lower = self.docs.lower()
+        self._cache: dict[str, str | None] = {}
         self.lookups = 0
 
-    def supports(self, token: str) -> bool:
+    def support(self, token: str) -> str | None:
+        """SUPPORT_PREV / SUPPORT_REPO / SUPPORT_DOC, o None si nada lo respalda."""
         if token in self.previous:
-            return True
+            return SUPPORT_PREV
         if token in self._cache:
             return self._cache[token]
         if self.lookups >= MAX_TOKENS_CHECKED:
-            return True  # tope alcanzado: no se marca lo que no se pudo comprobar
+            return SUPPORT_PREV  # tope alcanzado: no se marca lo que no se pudo comprobar
         self.lookups += 1
-        hit = any(_grep_repo(root, token) for root in self.roots)
-        self._cache[token] = hit
-        return hit
+        kind = None
+        if any(_grep_repo(root, token) for root in self.roots):
+            kind = SUPPORT_REPO
+        elif any(_grep_repo(root, token, ignore_case=True) for root in self.roots):
+            kind = SUPPORT_REPO
+        elif token.lower() in self.docs_lower:
+            kind = SUPPORT_DOC
+        self._cache[token] = kind
+        return kind
+
+    def supports(self, token: str) -> bool:
+        return self.support(token) is not None
 
 
-def _grep_repo(root: Path, token: str) -> bool:
+def _grep_repo(root: Path, token: str, ignore_case: bool = False) -> bool:
+    flag = ["-i"] if ignore_case else []
     try:
         proc = subprocess.run(
-            ["git", "-C", str(root), "grep", "-l", "-F", "-I", "-e", token, "--", "."],
+            ["git", "-C", str(root), "grep", "-l", "-F", "-I", *flag, "-e", token, "--", "."],
             capture_output=True, text=True, timeout=GREP_TIMEOUT,
         )
         if proc.returncode in (0, 1):
@@ -113,13 +134,30 @@ def _grep_repo(root: Path, token: str) -> bool:
         pass
     try:
         proc = subprocess.run(
-            ["grep", "-rIlF", "--exclude-dir=.git", "--exclude-dir=vendor", "--exclude-dir=node_modules",
+            ["grep", "-rIlF", *flag, "--exclude-dir=.git", "--exclude-dir=vendor", "--exclude-dir=node_modules",
              "-e", token, "--", str(root)],
             capture_output=True, text=True, timeout=GREP_TIMEOUT,
         )
         return proc.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def load_project_docs(knowledge_dir: Path | None, subdirs: tuple[str, ...] = ("extracted", "learning")) -> str:
+    """Texto de los .md de knowledge/<extracted|learning> (solo lectura; '' si no hay)."""
+    if knowledge_dir is None:
+        return ""
+    parts: list[str] = []
+    for sub in subdirs:
+        base = Path(knowledge_dir) / sub
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.md")):
+            try:
+                parts.append(f.read_text(encoding="utf-8", errors="ignore"))
+            except OSError:
+                continue
+    return "\n".join(parts)
 
 
 def _looks_like_identifier(token: str) -> bool:
@@ -158,12 +196,13 @@ def verify(
     previous: list[str] | None = None,
     truncated: bool = False,
     today: str | None = None,
+    docs: str = "",
 ) -> ClaimResult:
     """Texto anotado + contadores. Sin texto devuelve el mismo texto."""
     result = ClaimResult(text or "", truncated=truncated)
     if not text:
         return result
-    evidence = Evidence(index, previous or [])
+    evidence = Evidence(index, previous or [], docs)
     today = today or date.today().isoformat()
     lines = text.split("\n")
     out: list[str] = []
@@ -209,8 +248,12 @@ def _check_block(block: list[str], lang: str, proposed: bool, evidence: Evidence
         result.blocks_proposed += 1
         return MARK_PROPOSED
     result.blocks_checked += 1
-    missing = sorted(t for t in idents if not evidence.supports(t))
+    kinds = {t: evidence.support(t) for t in idents}
+    missing = sorted(t for t, k in kinds.items() if k is None)
     if len(idents) - len(missing) >= BLOCK_MIN_SUPPORT * len(idents):
+        if any(k == SUPPORT_DOC for k in kinds.values()):
+            result.doc_supported += 1
+            return MARK_DOC_BLOCK
         return None
     result.blocks_unsupported += 1
     result.unsupported_tokens.extend(missing)
@@ -222,6 +265,7 @@ def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: st
     if MARK_UNSUPPORTED in line:
         return line
     missing: list[str] = []
+    doc_only: list[str] = []
     for raw in _BACKTICK_RE.findall(line):
         token = raw.strip()
         if not _looks_like_identifier(token):
@@ -230,16 +274,28 @@ def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: st
         core = token.rstrip("()")
         # `pkg.Func` cuenta si existe el nombre final (el código rara vez repite el prefijo).
         tail = re.split(r"[./:]", core)[-1]
-        if not (evidence.supports(core) or (tail != core and evidence.supports(tail))):
+        kind = evidence.support(core) or (evidence.support(tail) if tail != core else None)
+        if kind is None:
             result.identifiers_unsupported += 1
             missing.append(token)
+        elif kind == SUPPORT_DOC:
+            doc_only.append(token)
     masked = _BACKTICK_RE.sub(lambda m: " " * len(m.group(0)), line)
     for token in _numbers_in(masked, today):
         result.numbers_checked += 1
-        if not evidence.supports(token):
+        kind = evidence.support(token)
+        if kind is None:
             result.numbers_unsupported += 1
             missing.append(token)
-    if not missing:
+        elif kind == SUPPORT_DOC:
+            doc_only.append(token)
+    if not missing and not doc_only:
         return line
-    result.unsupported_tokens.extend(missing)
-    return f"{line.rstrip()} {MARK_UNSUPPORTED}: {', '.join(dict.fromkeys(missing))}"
+    out = line.rstrip()
+    if doc_only:
+        result.doc_supported += len(doc_only)
+        out = f"{out} {MARK_DOC}: {', '.join(dict.fromkeys(doc_only))})"
+    if missing:
+        result.unsupported_tokens.extend(missing)
+        out = f"{out} {MARK_UNSUPPORTED}: {', '.join(dict.fromkeys(missing))}"
+    return out

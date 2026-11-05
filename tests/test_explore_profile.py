@@ -50,7 +50,7 @@ def test_forced_y_bridge_siguen_en_completo():
 
 def test_bloque_exploratorio_y_nota():
     block = rp.user_block(rp.PROFILE_EXPLORE)
-    for texto in ("5 a 10 líneas", "Evidencia", "archivo:línea", "¿Quieres que…?"):
+    for texto in ("Conclusión", "Hallazgos clave", "Riesgos", "Qué falta decidir", "archivo:línea", "¿Quieres que…?"):
         assert texto in block
     assert block != rp.user_block(rp.PROFILE_BRIEF)
     assert rp.with_bounded_note("texto", rp.PROFILE_EXPLORE).endswith(rp.BOUNDED_NOTE)
@@ -125,8 +125,9 @@ def test_plan_llm_con_report_queda_en_completo(orch, monkeypatch):
     # Las reglas duras quitarían el report sin palabra clave: aquí interesa el plan de 2 pasos.
     monkeypatch.setattr(router, "apply_hard_rules", lambda steps, *a, **k: (steps, []))
     out = orch.run(EXPLORA)
-    assert orch.fake_agents[ARCH].profiles == [rp.PROFILE_FULL]
-    assert rp.BOUNDED_NOTE not in out
+    assert orch.fake_agents[ARCH].profiles == [rp.PROFILE_FULL]  # el primer paso no se acota
+    assert orch.fake_agents["report_agent"].profiles == [rp.PROFILE_DECISION]  # el último sí
+    assert rp.BOUNDED_NOTE in out
 
 
 def test_en_detalle_y_forzado_desactivan_el_exploratorio(orch, monkeypatch):

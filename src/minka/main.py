@@ -27,7 +27,10 @@ Uso:
 
 Comandos del modo interactivo:
     /status  — estado del sistema (sesión AWS, backend, repos, memoria, nivel)
-    /clear   — limpia el historial de la sesión actual
+    /clear   — limpia el historial de la sesión actual (y la investigación oculta)
+    /detalle [N] — investigación de los pasos previos del último pedido (o del pedido N);
+               en planes de varios agentes solo se imprime el último paso (--completo y
+               --debug lo muestran todo; sin TTY, --plain o --json-out también)
     salir    — termina la sesión
     Enter envía; Alt+Enter inserta un salto de línea. Un pegado de varias líneas se
     muestra colapsado ("Pegado #N +M líneas") y se expande al enviarlo (solo con TTY).
@@ -43,7 +46,7 @@ from rich.panel import Panel
 from rich.table import Table
 from typer.core import TyperGroup
 
-from minka._app import QUIET_ENV, SOURCE_ENV
+from minka._app import PLAIN_ENV, QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
 from minka.core import metrics, render
 from minka.core.orchestrator import router
@@ -115,6 +118,41 @@ def _require_llm_backend() -> None:
     if missing:
         typer.echo(missing, err=True)
         raise typer.Exit(code=1)
+
+
+def _hide_investigation(*, completo: bool, debug: bool, plain: bool, json_out: bool) -> bool:
+    if completo or debug or plain or json_out:
+        return False
+    if os.getenv(PLAIN_ENV, "").strip().lower() in ("1", "true", "yes"):
+        return False
+    return _is_tty()
+
+
+INVESTIGATION_PAGE_LINES = 60
+
+
+def _print_investigation(orchestrator, arg: str) -> None:
+    """/detalle [N]: imprime la investigación oculta por bloques de ~60 líneas."""
+    turn = None
+    if arg:
+        if not arg.isdigit():
+            console.print("[yellow]Uso: /detalle o /detalle N (número de pedido de la sesión).[/yellow]")
+            return
+        turn = int(arg)
+    inv = orchestrator.investigation(turn)
+    if inv is None:
+        console.print("[dim]No hay investigación oculta para ese pedido.[/dim]")
+        return
+    console.print(render.dim_line(f"Investigación del pedido {inv['turn']} · {', '.join(inv['agents'])}"))
+    lines = inv["text"].split("\n")
+    for start in range(0, len(lines), INVESTIGATION_PAGE_LINES):
+        console.print("\n".join(lines[start : start + INVESTIGATION_PAGE_LINES]), markup=False, highlight=False)
+        if start + INVESTIGATION_PAGE_LINES < len(lines):
+            answer = console.input(
+                f"[dim]— {start + INVESTIGATION_PAGE_LINES}/{len(lines)} líneas · Enter sigue, q sale —[/dim] "
+            )
+            if answer.strip().lower() == "q":
+                break
 
 
 def _make_reader():
@@ -729,6 +767,10 @@ def main(
     orchestrator.read_only = read_only or os.getenv(SOURCE_ENV) == "bridge"
     # --completo y --debug apagan el perfil breve (ver core/orchestrator/response_profile.py).
     orchestrator.force_full = completo or debug
+    # Planes de 2+ pasos: ocultar la investigación solo con un humano mirando una terminal.
+    orchestrator.hide_investigation = _hide_investigation(
+        completo=completo, debug=debug, plain=plain, json_out=json_out is not None
+    )
     # Flags de runtime que leen los agentes (avisos en stderr, progreso en TTY).
     config.QUIET = quiet
     config.PROGRESS_ENABLED = json_out is None
@@ -775,7 +817,7 @@ def main(
         reader = _make_reader()
         keys = " Enter envía; Alt+Enter, salto de línea." if reader.tty else ""
         console.print(
-            f"[dim]Escribe tu pedido en español.{keys} Comandos: /status, /clear, salir.[/dim]\n"
+            f"[dim]Escribe tu pedido en español.{keys} Comandos: /status, /clear, /detalle, salir.[/dim]\n"
         )
         try:
             while True:
@@ -793,9 +835,13 @@ def main(
                     orchestrator.clear_session()
                     console.print("[dim]Historial limpio.[/dim]")
                     continue
+                if low == "/detalle" or low.startswith("/detalle "):
+                    parts = user_input.split(maxsplit=1)
+                    _print_investigation(orchestrator, parts[1].strip() if len(parts) > 1 else "")
+                    continue
                 if low.startswith("/"):
                     console.print(
-                        "[yellow]Comando desconocido. Disponibles: /status, /clear, salir.[/yellow]"
+                        "[yellow]Comando desconocido. Disponibles: /status, /clear, /detalle, salir.[/yellow]"
                     )
                     continue
                 # El historial vive en orchestrator.memory: aquí solo viaja el pedido crudo.
@@ -883,7 +929,8 @@ def stats(
         f"cierres recortados: {agg['closings_removed']} "
         f"({agg['ends_with_offer']} respuestas con oferta)     citas no encontradas: "
         f"{agg['citations_missing']}/{agg['citations_total']}     afirmaciones sin respaldo: "
-        f"{agg['claims_unsupported']}/{agg['claims_checked']} (bloques propuestos {agg['blocks_proposed']})"
+        f"{agg['claims_unsupported']}/{agg['claims_checked']} (doc {agg['claims_doc']}, "
+        f"bloques propuestos {agg['blocks_proposed']})"
         f"     salidas cortadas: {agg['truncated_outputs']}[/dim]"
     )
     hashes = agg.get("prompt_hashes") or {}

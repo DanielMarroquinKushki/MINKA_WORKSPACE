@@ -71,6 +71,10 @@ def _annotate_line(line: str, index: cit.RepoIndex, cache: dict) -> tuple[str, i
         total += 1
         status = _status(index, path, int(start) if start else None, cache)
         mark = _mark_for(status)
+        if mark == MARK_MISSING:
+            suggestion = cache.setdefault(("suggest", path), index.suggest(path))
+            if suggestion:
+                mark = f"{mark} (¿quisiste decir {suggestion[0]}?)"
         end = m.end()
         # Si la cita va entre backticks, el marcador queda fuera del backtick.
         if end < len(line) and line[end] == "`" and m.start() > 0 and line[m.start() - 1] == "`":

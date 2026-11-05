@@ -98,6 +98,12 @@ class Orchestrator:
         self.last_citations_total: int = 0
         self.last_response_lines: int = 0
         self.last_claims: dict = self._empty_claims()
+        # Planes de 2+ pasos: con hide_investigation se muestra solo el último paso y los
+        # previos quedan aquí (memoria de la sesión, nunca en disco ni en metrics). /detalle.
+        self.hide_investigation: bool = False
+        self.investigations: list[dict] = []
+        self.last_investigation_line: str | None = None
+        self._docs_cache: tuple[str | None, str] | None = None
         self.last_citations_missing: int = 0
         # Contexto vivo del proyecto (live_context.py): foto ÚNICA por sesión, perezosa.
         self._live_context = None
@@ -105,7 +111,7 @@ class Orchestrator:
 
     @staticmethod
     def _empty_claims() -> dict:
-        return {"checked": 0, "unsupported": 0, "blocks_proposed": 0, "truncated": 0}
+        return {"checked": 0, "unsupported": 0, "blocks_proposed": 0, "truncated": 0, "doc": 0}
 
     def _verify_claims(self, result: str, request: str, agent) -> str:
         """Gancho por paso (claim_check.py): anota "⚠ sin respaldo" y la salida cortada, y
@@ -115,12 +121,15 @@ class Orchestrator:
         try:
             previous = [request, *(s.get("result") or "" for s in self.state.steps)]
             truncated = bool((getattr(agent, "last_usage", None) or {}).get("truncated"))
-            checked = claim_check.verify(result, self._citation_index(), previous, truncated=truncated)
+            checked = claim_check.verify(
+                result, self._citation_index(), previous, truncated=truncated, docs=self._knowledge_text()
+            )
         except Exception:  # noqa: BLE001 — el verificador nunca rompe la respuesta
             return result
         self.last_claims["checked"] += checked.checked
         self.last_claims["unsupported"] += checked.unsupported
         self.last_claims["blocks_proposed"] += checked.blocks_proposed
+        self.last_claims["doc"] += checked.doc_supported
         self.last_claims["truncated"] += 1 if truncated else 0
         return checked.text
 
@@ -154,8 +163,47 @@ class Orchestrator:
             return None
 
     def clear_session(self) -> None:
-        """Olvida el historial de la sesión (REPL /clear)."""
+        """Olvida el historial de la sesión (REPL /clear), incluida la investigación oculta."""
         self.memory.clear()
+        self.investigations.clear()
+
+    def investigation(self, turn: int | None = None) -> dict | None:
+        """Investigación oculta del último pedido o del pedido `turn` (1-based en la sesión)."""
+        if not self.investigations:
+            return None
+        if turn is None:
+            return self.investigations[-1]
+        return next((inv for inv in self.investigations if inv["turn"] == turn), None)
+
+    def _knowledge_text(self) -> str:
+        """Knowledge del proyecto (extracted + learning) para el verificador; una lectura por proyecto."""
+        project = getattr(config, "ACTIVE_PROJECT", None)
+        if self._docs_cache is None or self._docs_cache[0] != project:
+            base = config.PROJECTS_DIR / project / "knowledge" if project else None
+            self._docs_cache = (project, claim_check.load_project_docs(base))
+        return self._docs_cache[1]
+
+    def _hide_steps(self, final: str, plan: list[dict], request: str) -> str:
+        """Separa el último paso (se muestra) de la investigación previa (se guarda)."""
+        marker = f"### [{plan[-1]['agent']}]\n"
+        idx = final.rfind(marker)
+        if idx < 0:
+            return final
+        shown, hidden = final[idx + len(marker):], final[:idx].rstrip()
+        agents = [s["agent"].replace("_agent", "") for s in plan[:-1]]
+        per_agent = self.last_usage.get("per_agent") or []
+        turns = sum(int(u.get("requests") or 0) for u in per_agent[:-1])
+        line = (
+            f"Investigación oculta: {', '.join(agents)} · {turns} vueltas · "
+            f"{self.last_citations_total} citas verificadas, {self.last_citations_missing} no encontradas, "
+            f"{self.last_claims['unsupported']} sin respaldo · /detalle"
+        )
+        self.investigations.append(
+            {"turn": len(self.memory), "request": request[:80], "agents": agents, "text": hidden, "line": line}
+        )
+        self.last_investigation_line = line
+        console.print(render.dim_line(line))
+        return shown
 
     @property
     def session_turns(self) -> list[dict]:
@@ -343,6 +391,7 @@ class Orchestrator:
         self.last_citations_missing = 0
         self.last_response_lines = 0
         self.last_claims = self._empty_claims()
+        self.last_investigation_line = None
         started = perf_counter()
         try:
             return self._run(task, use_llm_planner, resume, forced_agent)
@@ -559,6 +608,7 @@ class Orchestrator:
                     step["agent"],
                     force_full=self.force_full or response_profile.wants_full(request),
                     plan_agents=[s["agent"] for s in plan],
+                    last_of_plan=i == len(plan) - 1,
                 )
                 agent.response_profile = self.last_profile
                 result = agent.run(task_with_ctx)
@@ -573,6 +623,9 @@ class Orchestrator:
         final = "\n\n".join(results)
         # Se guarda la salida consolidada SIN cabeceras (las quita la memoria); se muestra con ellas.
         final = self._record_turn(request, list(self.last_plan), router.is_useful_result(result), final)
+        # Plan de 2+ pasos con TTY: solo se muestra el último paso; lo demás queda en /detalle.
+        if len(plan) > 1 and self.hide_investigation:
+            final = self._hide_steps(final, plan, request)
         # La nota "respuesta acotada" es solo para mostrar: no va a la memoria ni al modelo.
         final = response_profile.with_bounded_note(final, self.last_profile)
 

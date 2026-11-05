@@ -114,6 +114,7 @@ def build_run_record(
         "claims_checked": int((claims or {}).get("checked") or 0),
         "claims_unsupported": int((claims or {}).get("unsupported") or 0),
         "blocks_proposed": int((claims or {}).get("blocks_proposed") or 0),
+        "claims_doc": int((claims or {}).get("doc") or 0),
         "truncated_outputs": int((claims or {}).get("truncated") or 0),
         # Huella de prompts + tools + modelos (core/baseline.py): misma línea base ⇔ mismo hash.
         "prompt_hash": prompt_hash,
@@ -192,7 +193,7 @@ def aggregate(
     totals = dict.fromkeys(TOKEN_KEYS, 0)
     cost = base = duration = 0.0
     ok = fix_runs = fix_iters = repeated = capped = 0
-    claims_checked = claims_unsupported = blocks_proposed = truncated_outputs = 0
+    claims_checked = claims_unsupported = blocks_proposed = truncated_outputs = claims_doc = 0
     offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
     prompt_hashes: Counter = Counter()
@@ -202,6 +203,7 @@ def aggregate(
         claims_checked += r.get("claims_checked") or 0
         claims_unsupported += r.get("claims_unsupported") or 0
         blocks_proposed += r.get("blocks_proposed") or 0
+        claims_doc += r.get("claims_doc") or 0
         truncated_outputs += r.get("truncated_outputs") or 0
         if r.get("prompt_hash"):
             prompt_hashes[r["prompt_hash"]] += 1
@@ -254,6 +256,7 @@ def aggregate(
         "claims_checked": claims_checked,
         "claims_unsupported": claims_unsupported,
         "blocks_proposed": blocks_proposed,
+        "claims_doc": claims_doc,
         "truncated_outputs": truncated_outputs,
         "ends_with_offer": offers,
         "closings_removed": closings,

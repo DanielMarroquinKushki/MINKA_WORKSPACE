@@ -226,7 +226,7 @@ def test_report_recibe_el_analisis_completo_y_el_perfil_reporte(orch):
     assert orch.last_router == "llm" and orch.last_plan == [ARCH, REPORT]
     task = orch.fake_agents[REPORT].tasks[0]
     assert "detalle " * 400 in task and "recortado" not in task  # 1 500 chars ya no es el tope
-    assert orch.fake_agents[REPORT].profiles == [rp.PROFILE_REPORT]
+    assert orch.fake_agents[REPORT].profiles == [rp.PROFILE_DECISION]  # último paso de 2
     # Verificación por paso: lo del análisis previo respalda al reporte; lo nuevo se marca.
     assert out.count(cc.MARK_UNSUPPORTED) == 2  # `Fantasma_z()` en línea + bloque
     assert cc.MARK_TRUNCATED in out

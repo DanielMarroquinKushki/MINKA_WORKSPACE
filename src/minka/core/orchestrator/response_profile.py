@@ -27,6 +27,7 @@ from minka.core.memory.conversation_memory import CITATION_RE
 
 PROFILE_BRIEF = "breve"
 PROFILE_EXPLORE = "exploratorio"
+PROFILE_DECISION = "decision"  # último paso de un plan de varios agentes
 PROFILE_FULL = "completo"
 PROFILE_REPORT = "reporte"
 
@@ -45,12 +46,23 @@ BRIEF_BLOCK = (
     "archivo:línea; 3) riesgo o salvedad si existe; 4) siguiente paso solo si el pedido lo implica."
 )
 
-EXPLORE_BLOCK = (
+_DECISION_SHAPE = (
     "---\n"
-    "Formato de respuesta (consulta exploratoria): primero un resumen de 5 a 10 líneas con la "
-    "conclusión. Después una sección \"Evidencia\" con las citas clave archivo:línea, una por "
-    "línea, solo las que sostienen la conclusión. Conserva TODAS las citas archivo:línea que uses. "
-    "No termines ofreciendo más trabajo (nada de \"¿Quieres que…?\")."
+    "Formato de respuesta final (30 a 50 líneas), en este orden y solo estas secciones:\n"
+    "1) Conclusión: 3 a 5 líneas.\n"
+    "2) Hallazgos clave: máximo 6 viñetas, cada una con su cita archivo:línea.\n"
+    "3) Riesgos: una línea por riesgo, ordenados por severidad.\n"
+    "4) Qué falta decidir o verificar: 2 a 4 puntos.\n"
+    "No repitas el análisis, no incluyas diagramas ni código nuevo; donde falte el dato escribe "
+    "\"sin evidencia\". No termines ofreciendo más trabajo (nada de \"¿Quieres que…?\")."
+)
+# Exploratorio (architecture solo): la misma forma, sobre lo que el agente leyó en esta corrida.
+EXPLORE_BLOCK = _DECISION_SHAPE
+# Decisión (último paso de un plan de varios agentes): además, nada que no esté en el paso previo.
+DECISION_BLOCK = (
+    _DECISION_SHAPE
+    + "\nEl reporte no añade datos, identificadores ni cifras que no estén en el resultado del paso "
+    "previo; conserva sus citas archivo:línea."
 )
 
 REPORT_BLOCK = (
@@ -63,7 +75,7 @@ REPORT_BLOCK = (
 )
 
 BOUNDED_NOTE = "_Respuesta acotada; pide 'en detalle' para ampliar._"
-BOUNDED_PROFILES = (PROFILE_BRIEF, PROFILE_EXPLORE)
+BOUNDED_PROFILES = (PROFILE_BRIEF, PROFILE_EXPLORE, PROFILE_DECISION)
 
 # Lista cerrada: solo estas aperturas cuentan como "oferta de más trabajo".
 OFFER_PATTERNS = ("¿quieres", "¿te gustaría", "¿deseas", "¿necesitas", "¿te sirve")
@@ -82,15 +94,20 @@ def profile_for(
     agent: str,
     force_full: bool = False,
     plan_agents: list[str] | None = None,
+    last_of_plan: bool = False,
 ) -> str:
-    """`plan_agents`: agentes del plan completo; el exploratorio exige que sean solo
-    architecture_agent (con report u otro paso, el pedido es una investigación: completo)."""
+    """`plan_agents`: agentes del plan completo. El último paso de un plan de 2+ agentes recibe
+    `decision` (también si es report_agent); el exploratorio exige router llm y plan de solo
+    architecture_agent. "en detalle", --completo y --debug (force_full) dejan todo en completo."""
+    multi_last = bool(plan_agents) and len(plan_agents) > 1 and last_of_plan
     if agent in REPORT_AGENTS:
-        return PROFILE_REPORT
+        return PROFILE_DECISION if multi_last and not force_full else PROFILE_REPORT
     if force_full:
         return PROFILE_FULL
     if router_name in BRIEF_ROUTERS:
         return PROFILE_BRIEF
+    if multi_last:
+        return PROFILE_DECISION
     if router_name in EXPLORE_ROUTERS and plan_agents and set(plan_agents) <= set(EXPLORE_AGENTS):
         return PROFILE_EXPLORE
     return PROFILE_FULL
@@ -102,6 +119,8 @@ def user_block(profile: str) -> str:
         return BRIEF_BLOCK
     if profile == PROFILE_EXPLORE:
         return EXPLORE_BLOCK
+    if profile == PROFILE_DECISION:
+        return DECISION_BLOCK
     if profile == PROFILE_REPORT:
         return REPORT_BLOCK
     return ""

@@ -83,6 +83,16 @@ class Citation:
 # ---------------------------------------------------------------------------
 
 
+def _name_tokens(stem: str) -> set[str]:
+    """Tokens de 4+ letras de un nombre camelCase/snake_case, en minúsculas."""
+    parts = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", stem).replace("_", " ").replace("-", " ").lower().split()
+    return {p for p in parts if len(p) >= 4}
+
+
+def _flat(stem: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", stem.lower())
+
+
 class RepoIndex:
     """Repos de config.REPOS ya resueltos (symlinks incluidos) y su índice por basename."""
 
@@ -133,6 +143,33 @@ class RepoIndex:
         if owner is None:
             return None
         return owner, real
+
+    def suggest(self, cited: str, limit: int = 1) -> list[str]:
+        """Archivos de los repos con basename parecido al citado (para "¿quisiste decir…?").
+        Compara el nombre sin extensión normalizado (camelCase/_ → tokens) por similitud y
+        por tokens de 4+ letras en común; devuelve rutas `repo/…` ordenadas por parecido."""
+        import difflib
+
+        base = cited.split("/")[-1]
+        stem = base.rsplit(".", 1)[0]
+        if not stem:
+            return []
+        want_ext = base.rsplit(".", 1)[-1] if "." in base else None
+        want_tokens = _name_tokens(stem)
+        scored: list[tuple[float, str]] = []
+        for name, entries in self._index().items():
+            if want_ext and not name.endswith("." + want_ext):
+                continue
+            other = name.rsplit(".", 1)[0]
+            ratio = difflib.SequenceMatcher(None, _flat(stem), _flat(other)).ratio()
+            shared = {a for a in want_tokens for b in _name_tokens(other) if a[:5] == b[:5]}
+            score = max(ratio, 0.5 + 0.25 * len(shared)) if shared else ratio
+            if score < 0.6:
+                continue
+            for key, path in entries:
+                scored.append((score, self.relative(key, path.resolve()) if self.contains(path.resolve()) else path.as_posix()))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        return [p for _, p in scored[:limit]]
 
     def resolve(self, cited: str) -> tuple[str, list[tuple[str, Path]]]:
         """Devuelve (status, matches) con matches = [(repo_key, ruta_real)]."""
