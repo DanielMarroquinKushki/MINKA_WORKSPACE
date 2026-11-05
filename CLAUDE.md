@@ -59,6 +59,11 @@ Luego: `minka`
 - `/status`  → estado del sistema (sesión AWS, backend, repos, memoria, nivel)
 - `/clear`   → limpia el historial de la sesión
 - `salir`    → termina la sesión
+- Enter envía; Alt+Enter inserta un salto de línea (en Terminal/iTerm2 activar "Option as
+  Meta"). Un pegado de `PASTE_COLLAPSE_LINES` (3) líneas o `PASTE_COLLAPSE_CHARS` (500)
+  caracteres se colapsa en `[Pegado #N +M líneas]` y se expande al enviarlo; desde
+  `PASTE_WARN_TOKENS` (2000) estimados avisa el tamaño. Solo con TTY (`core/repl_input.py`,
+  prompt_toolkit, historial en memoria); bridge, tuberías y scripts siguen con `input()`.
 - `minka --debug` → muestra input/resultado de cada tool call
 
 **Configuración:**

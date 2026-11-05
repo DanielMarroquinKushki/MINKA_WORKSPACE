@@ -131,6 +131,12 @@ PROGRESS_ENABLED = True  # main.py lo apaga con --json-out; core/progress.py tam
 # viajan a cada agente como pares user/assistant y tope de chars del resultado guardado.
 HISTORY_MAX_TURNS = int(os.getenv("HISTORY_MAX_TURNS", "5"))
 HISTORY_RESULT_CHARS = int(os.getenv("HISTORY_RESULT_CHARS", "1500"))
+# Pegados en el REPL (core/repl_input.py, solo con TTY): un pegado de al menos
+# PASTE_COLLAPSE_LINES líneas o PASTE_COLLAPSE_CHARS caracteres se muestra como
+# "[Pegado #N +M líneas]" y se expande al enviarlo; desde PASTE_WARN_TOKENS estimados avisa.
+PASTE_COLLAPSE_LINES = int(os.getenv("PASTE_COLLAPSE_LINES", "3"))
+PASTE_COLLAPSE_CHARS = int(os.getenv("PASTE_COLLAPSE_CHARS", "500"))
+PASTE_WARN_TOKENS = int(os.getenv("PASTE_WARN_TOKENS", "2000"))
 # Contexto vivo del proyecto (core/memory/live_context.py): <proyecto>.md de
 # ACTIVE_CONTEXT_DIR + última entrada real del session_log, como primer bloque del mensaje
 # user (nunca en el system). None = <DATA_DIR>/active-context; se sobreescribe en

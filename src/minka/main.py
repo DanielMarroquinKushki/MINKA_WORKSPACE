@@ -29,6 +29,8 @@ Comandos del modo interactivo:
     /status  — estado del sistema (sesión AWS, backend, repos, memoria, nivel)
     /clear   — limpia el historial de la sesión actual
     salir    — termina la sesión
+    Enter envía; Alt+Enter inserta un salto de línea. Un pegado de varias líneas se
+    muestra colapsado ("Pegado #N +M líneas") y se expande al enviarlo (solo con TTY).
 """
 
 import json
@@ -113,6 +115,19 @@ def _require_llm_backend() -> None:
     if missing:
         typer.echo(missing, err=True)
         raise typer.Exit(code=1)
+
+
+def _make_reader():
+    """Lector del REPL: prompt_toolkit solo con TTY; sin TTY, el console.input de siempre."""
+    from minka.core.repl_input import ReplReader
+
+    return ReplReader(
+        console,
+        tty=_is_tty(),
+        collapse_lines=config.PASTE_COLLAPSE_LINES,
+        collapse_chars=config.PASTE_COLLAPSE_CHARS,
+        warn_tokens=config.PASTE_WARN_TOKENS,
+    )
 
 
 def _make_orchestrator():
@@ -757,12 +772,15 @@ def main(
         return
 
     if interactive:
+        reader = _make_reader()
+        keys = " Enter envía; Alt+Enter, salto de línea." if reader.tty else ""
         console.print(
-            "[dim]Escribe tu pedido en español. Comandos: /status, /clear, salir.[/dim]\n"
+            f"[dim]Escribe tu pedido en español.{keys} Comandos: /status, /clear, salir.[/dim]\n"
         )
         try:
             while True:
-                user_input = console.input("[bold green]>[/bold green] ").strip()
+                # Texto ya expandido: la memoria y el router nunca ven el marcador del pegado.
+                user_input = reader.read()
                 if not user_input:
                     continue
                 low = user_input.lower()

@@ -43,6 +43,8 @@ en `<DATA_DIR>/.env` y `LLM_BACKEND=anthropic`. Si todos los repos comparten car
 absolutos. Nunca sobrescribe un proyecto existente. Las consultas puntuales salen breves con
 citas `archivo:línea` ("en detalle" o `--completo` para la versión larga); `--plain` imprime
 sin Markdown; `minka stats` muestra tokens, costo y la línea base (`prompt_hash`).
+En el REPL, Enter envía y Alt+Enter inserta un salto de línea; un pegado de 3+ líneas (o 500+
+caracteres) se muestra como `[Pegado #N +M líneas]` y se expande al enviarlo.
 
 ## Cargar contexto (lo mínimo para que el agente vea tu código)
 
