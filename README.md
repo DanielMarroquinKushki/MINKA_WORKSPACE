@@ -17,7 +17,7 @@ uv tool install git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE
 Después: `minka init` (onboarding guiado: crea `config_local.py` y `.env` en `<DATA_DIR>`
 sin sobrescribir y pregunta REPOS y backend), `minka-sso` si usas Bedrock, `minka doctor`
 para verificar el entorno y luego `minka`. `<DATA_DIR>` es `MINKA_HOME` o, si no está,
-`~/.minka/`. Guía paso a paso: `docs/ONBOARDING.md`.
+`~/.minka/`. Guía paso a paso: `docs/ONBOARDING.md`. Qué hace, qué se midió y qué falta: `docs/ESTADO.md`.
 
 > Nivel 4 (RAG): instala con el extra
 > (`uv tool install 'minka-workspace[rag] @ git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE'`;
