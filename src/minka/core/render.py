@@ -59,7 +59,17 @@ def print_result(text: str, console: Console, *, render: bool, rule: bool = True
     if render:
         console.print(PlainMarkdown(text or ""))
     else:
-        console.print(text or "", markup=False)
+        console.print(strip_voice_emojis(text or ""), markup=False)
+
+
+VOICE_EMOJIS = ("🔴", "🟠", "🟡")
+
+
+def strip_voice_emojis(text: str) -> str:
+    """Salida cruda (--plain, sin TTY): sin los semáforos de la voz."""
+    for e in VOICE_EMOJIS:
+        text = text.replace(e + " ", "").replace(e, "")
+    return text
 
 
 def dim_line(text: str) -> Text:

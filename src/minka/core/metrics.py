@@ -127,6 +127,10 @@ def build_run_record(
         "claims_unsupported": int((claims or {}).get("unsupported") or 0),
         "blocks_proposed": int((claims or {}).get("blocks_proposed") or 0),
         "claims_doc": int((claims or {}).get("doc") or 0),
+        # Historial de decisiones (core/memory/decisions.py): entradas usadas en el bloque user y
+        # referencias ADR de la respuesta sin respaldo en el decisions_log.
+        "decisions_used": int((claims or {}).get("decisions_used") or 0),
+        "decisions_unsupported": int((claims or {}).get("decisions_unsupported") or 0),
         # Seguridad en tools (core/security.py): archivos excluidos y redacciones por tipo, sin valores.
         "security_excluded": int(totals.get("security_excluded") or 0),
         "redactions": {k: int(v) for k, v in (totals.get("redactions") or {}).items()},
@@ -209,7 +213,7 @@ def aggregate(
     cost = base = duration = 0.0
     ok = fix_runs = fix_iters = repeated = capped = 0
     claims_checked = claims_unsupported = blocks_proposed = truncated_outputs = claims_doc = 0
-    security_excluded = 0
+    security_excluded = decisions_used = decisions_unsupported = 0
     redactions: Counter = Counter()
     offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
@@ -222,6 +226,8 @@ def aggregate(
         blocks_proposed += r.get("blocks_proposed") or 0
         claims_doc += r.get("claims_doc") or 0
         security_excluded += r.get("security_excluded") or 0
+        decisions_used += r.get("decisions_used") or 0
+        decisions_unsupported += r.get("decisions_unsupported") or 0
         redactions.update({k: int(v) for k, v in (r.get("redactions") or {}).items()})
         truncated_outputs += r.get("truncated_outputs") or 0
         if r.get("prompt_hash"):
@@ -278,6 +284,8 @@ def aggregate(
         "claims_doc": claims_doc,
         "security_excluded": security_excluded,
         "redactions": dict(redactions),
+        "decisions_used": decisions_used,
+        "decisions_unsupported": decisions_unsupported,
         "truncated_outputs": truncated_outputs,
         "ends_with_offer": offers,
         "closings_removed": closings,

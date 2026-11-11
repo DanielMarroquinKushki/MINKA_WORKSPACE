@@ -74,6 +74,26 @@ REPORT_BLOCK = (
     "líneas. No termines ofreciendo más trabajo (nada de \"¿Quieres que…?\")."
 )
 
+VOICE_CERCANA = "cercana"
+VOICE_DIRECTA = "directa"
+VOICES = (VOICE_CERCANA, VOICE_DIRECTA)
+# Perfiles que llevan voz; el completo (--completo, --debug, "en detalle") nunca.
+VOICE_PROFILES = (PROFILE_BRIEF, PROFILE_EXPLORE, PROFILE_DECISION, PROFILE_REPORT)
+_VOICE_COMMON = (
+    "Marca cada riesgo con 🔴 (alto), 🟠 (medio) o 🟡 (bajo) según severidad. Termina con UNA "
+    "recomendación concreta, apoyada en un hallazgo con su cita archivo:línea, en lugar de ofrecer "
+    "más trabajo. No añadas hechos nuevos: la voz solo encuadra lo que ya está en la respuesta."
+)
+VOICE_BLOCKS = {
+    VOICE_CERCANA: (
+        "Voz cercana: abre con 1 a 3 líneas en lenguaje natural que digan lo más importante para "
+        "quien pregunta; después sigue la estructura indicada. " + _VOICE_COMMON
+    ),
+    VOICE_DIRECTA: (
+        "Voz directa: sin apertura, ve a la estructura indicada. " + _VOICE_COMMON
+    ),
+}
+
 BOUNDED_NOTE = "_Respuesta acotada; pide 'en detalle' para ampliar._"
 BOUNDED_PROFILES = (PROFILE_BRIEF, PROFILE_EXPLORE, PROFILE_DECISION)
 
@@ -113,17 +133,27 @@ def profile_for(
     return PROFILE_FULL
 
 
-def user_block(profile: str) -> str:
+def voice_block(voice: str | None, profile: str) -> str:
+    """Bloque de voz para el mensaje user; vacío sin voz o en el perfil completo."""
+    if not voice or profile not in VOICE_PROFILES:
+        return ""
+    return VOICE_BLOCKS.get(str(voice).strip().lower(), "")
+
+
+def user_block(profile: str, voice: str | None = None) -> str:
     """Texto que se añade al mensaje user; vacío en el perfil completo."""
     if profile == PROFILE_BRIEF:
-        return BRIEF_BLOCK
-    if profile == PROFILE_EXPLORE:
-        return EXPLORE_BLOCK
-    if profile == PROFILE_DECISION:
-        return DECISION_BLOCK
-    if profile == PROFILE_REPORT:
-        return REPORT_BLOCK
-    return ""
+        block = BRIEF_BLOCK
+    elif profile == PROFILE_EXPLORE:
+        block = EXPLORE_BLOCK
+    elif profile == PROFILE_DECISION:
+        block = DECISION_BLOCK
+    elif profile == PROFILE_REPORT:
+        block = REPORT_BLOCK
+    else:
+        return ""
+    extra = voice_block(voice, profile)
+    return f"{block}\n{extra}" if extra else block
 
 
 def is_offer_line(line: str) -> bool:

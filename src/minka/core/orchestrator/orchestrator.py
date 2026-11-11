@@ -101,6 +101,9 @@ class Orchestrator:
         # Planes de 2+ pasos: con hide_investigation se muestra solo el último paso y los
         # previos quedan aquí (memoria de la sesión, nunca en disco ni en metrics). /detalle.
         self.hide_investigation: bool = False
+        # Voz de la respuesta (None = apagada: --completo, --debug, --plain). La fija main.py.
+        self.voice: str | None = None
+        self._decisions_cache: tuple[str | None, list] | None = None
         self.investigations: list[dict] = []
         self.last_investigation_line: str | None = None
         self._docs_cache: tuple[str | None, str] | None = None
@@ -111,7 +114,10 @@ class Orchestrator:
 
     @staticmethod
     def _empty_claims() -> dict:
-        return {"checked": 0, "unsupported": 0, "blocks_proposed": 0, "truncated": 0, "doc": 0}
+        return {
+            "checked": 0, "unsupported": 0, "blocks_proposed": 0, "truncated": 0, "doc": 0,
+            "decisions_used": 0, "decisions_unsupported": 0,
+        }
 
     def _verify_claims(self, result: str, request: str, agent) -> str:
         """Gancho por paso (claim_check.py): anota "⚠ sin respaldo" y la salida cortada, y
@@ -121,8 +127,11 @@ class Orchestrator:
         try:
             previous = [request, *(s.get("result") or "" for s in self.state.steps)]
             truncated = bool((getattr(agent, "last_usage", None) or {}).get("truncated"))
+            from minka.core.memory import decisions as _dec
+
             checked = claim_check.verify(
-                result, self._citation_index(), previous, truncated=truncated, docs=self._knowledge_text()
+                result, self._citation_index(), previous, truncated=truncated, docs=self._knowledge_text(),
+                decisions=_dec.index(self._decisions()),
             )
         except Exception:  # noqa: BLE001 — el verificador nunca rompe la respuesta
             return result
@@ -131,6 +140,7 @@ class Orchestrator:
         self.last_claims["blocks_proposed"] += checked.blocks_proposed
         self.last_claims["doc"] += checked.doc_supported
         self.last_claims["truncated"] += 1 if truncated else 0
+        self.last_claims["decisions_unsupported"] += checked.decisions_unsupported
         return checked.text
 
     def _citation_index(self) -> RepoIndex:
@@ -151,6 +161,30 @@ class Orchestrator:
     def _live_block(self) -> str:
         live = self.live_context()
         return live.user_block() if live else ""
+
+    def _decisions(self) -> list:
+        """Decisiones del proyecto activo, una lectura por proyecto y sesión."""
+        from minka.core.memory import decisions
+
+        project = getattr(config, "ACTIVE_PROJECT", None)
+        if self._decisions_cache is None or self._decisions_cache[0] != project:
+            self._decisions_cache = (project, decisions.load_decisions(config, project))
+        return self._decisions_cache[1]
+
+    def _decisions_block(self, request: str) -> str:
+        """Bloque user con hasta CONTEXT_DECISIONS_MAX decisiones relevantes y el alcance del ticket."""
+        if not getattr(config, "CONTEXT_DECISIONS_ENABLED", True):
+            return ""
+        from minka.core.memory import decisions
+
+        try:
+            project = getattr(config, "ACTIVE_PROJECT", None)
+            selected = decisions.select(self._decisions(), request, int(getattr(config, "CONTEXT_DECISIONS_MAX", 3)))
+            scope = decisions.load_scope(config, project)
+        except Exception:  # noqa: BLE001 — el contexto nunca rompe el run
+            return ""
+        self.last_claims["decisions_used"] = len(selected)
+        return decisions.user_block(selected, scope, int(getattr(config, "CONTEXT_DECISIONS_MAX_TOKENS", 600)))
 
     @staticmethod
     def _prompt_hash() -> str | None:
@@ -363,6 +397,8 @@ class Orchestrator:
         console.print(render.dim_line(f"{name} · {request[:80]}"))
         agent.show_banner = False
         agent.live_context_block = self._live_block()
+        agent.decisions_block = self._decisions_block(request)
+        agent.voice = None  # forzado = completo: sin voz
         # Forzado (--agent, bridge): siempre completo, sin perfil breve.
         self.last_profile = response_profile.profile_for("forced", name, force_full=True)
         agent.response_profile = self.last_profile
@@ -605,6 +641,8 @@ class Orchestrator:
                 agent.conversation = self.memory.as_messages()
                 agent.show_banner = len(plan) > 1
                 agent.live_context_block = self._live_block()
+                agent.decisions_block = self._decisions_block(request)
+                agent.voice = self.voice
                 # Perfil por tipo de pedido: info_direct → breve; planner con plan de solo
                 # architecture → exploratorio; lo demás completo. "en detalle"/"completo"
                 # en el pedido, --completo y --debug fuerzan el completo.

@@ -120,6 +120,16 @@ def _require_llm_backend() -> None:
         raise typer.Exit(code=1)
 
 
+def _voice(*, completo: bool, debug: bool, plain: bool) -> str | None:
+    """VOICE de config (cercana|directa); None con --completo, --debug o --plain/MINKA_PLAIN."""
+    if completo or debug or plain or os.getenv(PLAIN_ENV, "").strip().lower() in ("1", "true", "yes"):
+        return None
+    from minka.core.orchestrator import response_profile
+
+    voice = str(getattr(config, "VOICE", "cercana") or "cercana").strip().lower()
+    return voice if voice in response_profile.VOICES else response_profile.VOICE_CERCANA
+
+
 def _hide_investigation(*, completo: bool, debug: bool, plain: bool, json_out: bool) -> bool:
     if completo or debug or plain or json_out:
         return False
@@ -771,6 +781,7 @@ def main(
     orchestrator.hide_investigation = _hide_investigation(
         completo=completo, debug=debug, plain=plain, json_out=json_out is not None
     )
+    orchestrator.voice = _voice(completo=completo, debug=debug, plain=plain)
     # Flags de runtime que leen los agentes (avisos en stderr, progreso en TTY).
     config.QUIET = quiet
     config.PROGRESS_ENABLED = json_out is None
@@ -933,7 +944,9 @@ def stats(
         f"bloques propuestos {agg['blocks_proposed']})"
         f"     salidas cortadas: {agg['truncated_outputs']}"
         f"     excluidos por política: {agg['security_excluded']}     redacciones: "
-        f"{' · '.join(f'{k} {v}' for k, v in sorted(agg['redactions'].items())) or 0}[/dim]"
+        f"{' · '.join(f'{k} {v}' for k, v in sorted(agg['redactions'].items())) or 0}"
+        f"     decisiones usadas: {agg['decisions_used']} · referencias sin respaldo: "
+        f"{agg['decisions_unsupported']}[/dim]"
     )
     hashes = agg.get("prompt_hashes") or {}
     if hashes:

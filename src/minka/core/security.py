@@ -107,7 +107,8 @@ def redact(text: str, enabled: bool | None = None) -> tuple[str, Counter]:
     out = text
     for kind, rx in REDACT_PATTERNS:
         out, n = rx.subn(f"[REDACTED:{kind}]", out)
-        counts[kind] += n
+        if n:
+            counts[kind] += n
 
     def _pan(m: re.Match) -> str:
         if _luhn_ok(m.group(0)):

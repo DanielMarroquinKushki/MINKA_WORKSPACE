@@ -71,6 +71,8 @@ class ClaimResult:
     blocks_proposed: int = 0
     truncated: bool = False
     doc_supported: int = 0  # respaldados solo por el knowledge del proyecto
+    decisions_checked: int = 0  # referencias ADR-nnn (con o sin fecha) comprobadas
+    decisions_unsupported: int = 0
     unsupported_tokens: list[str] = field(default_factory=list)
 
     @property
@@ -197,12 +199,15 @@ def verify(
     truncated: bool = False,
     today: str | None = None,
     docs: str = "",
+    decisions: dict[str, str | None] | None = None,
 ) -> ClaimResult:
-    """Texto anotado + contadores. Sin texto devuelve el mismo texto."""
+    """Texto anotado + contadores. Sin texto devuelve el mismo texto. `decisions`: id → fecha del
+    historial del proyecto, para comprobar referencias ADR-nnn (y su fecha, si la traen)."""
     result = ClaimResult(text or "", truncated=truncated)
     if not text:
         return result
     evidence = Evidence(index, previous or [], docs)
+    evidence.decisions = decisions or {}
     today = today or date.today().isoformat()
     lines = text.split("\n")
     out: list[str] = []
@@ -232,7 +237,10 @@ def verify(
         if h:
             heading = h.group(1)
             proposed_section = bool(_PROPOSED_RE.search(heading))
-        out.append(line if proposed_section else _annotate_line(line, evidence, result, today))
+        if proposed_section:
+            out.append(line)
+        else:
+            out.append(_annotate_decisions(_annotate_line(line, evidence, result, today), evidence, result))
     if truncated:
         out.append("")
         out.append(MARK_TRUNCATED)
@@ -259,6 +267,34 @@ def _check_block(block: list[str], lang: str, proposed: bool, evidence: Evidence
     result.unsupported_tokens.extend(missing)
     shown = ", ".join(missing[:5]) + (", …" if len(missing) > 5 else "")
     return f"{MARK_UNSUPPORTED}: {len(missing)} de {len(idents)} identificadores no aparecen en los repos ni en el resultado previo ({shown})"
+
+
+_ADR_REF_RE = re.compile(r"\b(ADR-\d{2,3})\b(?:\s*\((20\d{2}-\d{2}-\d{2})[^)]*\))?")
+MARK_DOC_DECISION = "(doc: decisions_log.md)"
+
+
+def _annotate_decisions(line: str, evidence: Evidence, result: ClaimResult) -> str:
+    """Referencias a decisiones: id (y fecha, si viene) contra el decisions_log del proyecto."""
+    refs = _ADR_REF_RE.findall(line)
+    if not refs or MARK_DOC_DECISION in line:
+        return line
+    known: dict[str, str | None] = getattr(evidence, "decisions", {}) or {}
+    missing: list[str] = []
+    found = 0
+    for adr, ref_date in refs:
+        result.decisions_checked += 1
+        if adr in known and (not ref_date or known[adr] in (None, ref_date)):
+            found += 1
+        else:
+            missing.append(f"{adr} ({ref_date})" if ref_date else adr)
+    out = line.rstrip()
+    if found:
+        out = f"{out} {MARK_DOC_DECISION}"
+    if missing:
+        result.decisions_unsupported += len(missing)
+        result.unsupported_tokens.extend(missing)
+        out = f"{out} {MARK_UNSUPPORTED}: {', '.join(dict.fromkeys(missing))}"
+    return out
 
 
 def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: str) -> str:

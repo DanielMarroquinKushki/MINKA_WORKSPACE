@@ -152,6 +152,9 @@ class BaseAgent(ABC):
         self.conversation: list[dict] = []
         # Perfil de concisión de UN run (lo fija el orquestador; ver response_profile.py).
         self.response_profile: str | None = None
+        # Voz (cercana|directa|None) y bloque de decisiones/alcance de UN run; van en el user.
+        self.voice: str | None = None
+        self.decisions_block: str = ""
         # Los fija el orquestador por run: banner "recibió tarea" solo en planes de 2+ pasos;
         # contexto vivo del proyecto como primer bloque del mensaje user (live_context.py).
         self.show_banner: bool = True
@@ -253,9 +256,17 @@ class BaseAgent(ABC):
             self.live_context_block = ""
             if live:
                 user_content = f"{live}\n\n---\n\n{user_content}"
-            # Perfil breve: bloque al final del mensaje user, nunca en el system (el prefijo
+            # Historial de decisiones y alcance del ticket (core/memory/decisions.py): mismo
+            # tratamiento que el contexto vivo: user, un solo uso, fuera de logs y métricas.
+            decisions = getattr(self, "decisions_block", "") or ""
+            self.decisions_block = ""
+            if decisions:
+                user_content = f"{decisions}\n\n---\n\n{user_content}"
+            # Perfil breve + voz: bloque al final del mensaje user, nunca en el system (el prefijo
             # cacheado y la línea base de prompts quedan intactos). Un solo uso por run.
-            block = response_profile.user_block(getattr(self, "response_profile", None) or "")
+            block = response_profile.user_block(
+                getattr(self, "response_profile", None) or "", getattr(self, "voice", None)
+            )
             self.response_profile = None
             if block:
                 user_content = f"{user_content}\n\n{block}"

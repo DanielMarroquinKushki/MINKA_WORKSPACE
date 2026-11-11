@@ -177,6 +177,16 @@ EXCLUDE_PATTERNS_EXTRA: tuple = ()
 # Redacción de secretos de alta confianza en el resultado de cada tool antes de ir al modelo y en
 # agent_runs.jsonl (claves AWS, llaves privadas, JWT, Bearer, PAN válido por Luhn). Nunca hex/KCV/alias.
 SECRET_REDACTION_ENABLED = os.getenv("SECRET_REDACTION_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+# Voz de la respuesta (core/orchestrator/response_profile.py): "cercana" abre con 1-3 líneas en
+# lenguaje natural y cierra con UNA recomendación; "directa" va a la estructura. Bloque en el
+# mensaje user (no mueve el prompt_hash); por proyecto en projects/<p>/config.py. --completo,
+# --debug y --plain la apagan.
+VOICE = os.getenv("VOICE", "cercana").strip().lower() or "cercana"
+# Historial de decisiones (core/memory/decisions.py): hasta N entradas del decisions_log.md del
+# proyecto elegidas por términos del pedido, con tope de tokens; va en el mensaje user.
+CONTEXT_DECISIONS_ENABLED = os.getenv("CONTEXT_DECISIONS_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+CONTEXT_DECISIONS_MAX = int(os.getenv("CONTEXT_DECISIONS_MAX", "3"))
+CONTEXT_DECISIONS_MAX_TOKENS = int(os.getenv("CONTEXT_DECISIONS_MAX_TOKENS", "600"))
 AUTO_COMMIT = False  # True solo en Nivel 5+
 AUTO_BRANCH = True  # Siempre crea rama antes de escribir
 BRANCH_PREFIX = "agent/"
