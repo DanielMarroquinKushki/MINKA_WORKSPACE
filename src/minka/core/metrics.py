@@ -6,6 +6,7 @@ resultado: esa traza de depuración sigue en output/logs/agent_runs.jsonl.
 
 import json
 import math
+import os
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,17 @@ def cache_ratio(tokens: dict) -> float | None:
     read = tokens.get("cache_read_input_tokens") or 0
     total = (tokens.get("input_tokens") or 0) + read + (tokens.get("cache_creation_input_tokens") or 0)
     return read / total if total else None
+
+
+def safe_cwd(path: str) -> str:
+    """Ruta del cwd sin el home del usuario: `~/...` en vez de `/Users/<nombre>/...`."""
+    try:
+        home = str(Path.home())
+        if path == home or path.startswith(home + os.sep):
+            return "~" + path[len(home):]
+    except (OSError, RuntimeError):
+        pass
+    return path
 
 
 def build_run_record(
@@ -115,6 +127,9 @@ def build_run_record(
         "claims_unsupported": int((claims or {}).get("unsupported") or 0),
         "blocks_proposed": int((claims or {}).get("blocks_proposed") or 0),
         "claims_doc": int((claims or {}).get("doc") or 0),
+        # Seguridad en tools (core/security.py): archivos excluidos y redacciones por tipo, sin valores.
+        "security_excluded": int(totals.get("security_excluded") or 0),
+        "redactions": {k: int(v) for k, v in (totals.get("redactions") or {}).items()},
         "truncated_outputs": int((claims or {}).get("truncated") or 0),
         # Huella de prompts + tools + modelos (core/baseline.py): misma línea base ⇔ mismo hash.
         "prompt_hash": prompt_hash,
@@ -194,6 +209,8 @@ def aggregate(
     cost = base = duration = 0.0
     ok = fix_runs = fix_iters = repeated = capped = 0
     claims_checked = claims_unsupported = blocks_proposed = truncated_outputs = claims_doc = 0
+    security_excluded = 0
+    redactions: Counter = Counter()
     offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
     prompt_hashes: Counter = Counter()
@@ -204,6 +221,8 @@ def aggregate(
         claims_unsupported += r.get("claims_unsupported") or 0
         blocks_proposed += r.get("blocks_proposed") or 0
         claims_doc += r.get("claims_doc") or 0
+        security_excluded += r.get("security_excluded") or 0
+        redactions.update({k: int(v) for k, v in (r.get("redactions") or {}).items()})
         truncated_outputs += r.get("truncated_outputs") or 0
         if r.get("prompt_hash"):
             prompt_hashes[r["prompt_hash"]] += 1
@@ -257,6 +276,8 @@ def aggregate(
         "claims_unsupported": claims_unsupported,
         "blocks_proposed": blocks_proposed,
         "claims_doc": claims_doc,
+        "security_excluded": security_excluded,
+        "redactions": dict(redactions),
         "truncated_outputs": truncated_outputs,
         "ends_with_offer": offers,
         "closings_removed": closings,

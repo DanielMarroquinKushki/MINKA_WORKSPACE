@@ -25,7 +25,7 @@ from rich.panel import Panel
 
 from minka._app import QUIET_ENV
 from minka.config_loader import config
-from minka.core import progress
+from minka.core import progress, security
 from minka.core.knowledge.loader import KnowledgeLoader
 from minka.core.memory.session_memory import SessionMemory
 from minka.core.memory.vector_memory import VectorMemory
@@ -186,6 +186,8 @@ class BaseAgent(ABC):
             "iterations_capped": 0,
             # 1 si la respuesta final se cortó por MAX_TOKENS (stop_reason max_tokens).
             "truncated": 0,
+            # Archivos excluidos por política y redacciones por tipo (core/security.py), sin valores.
+            "security": {"excluded": 0, "redacted": {}},
             # Una entrada por respuesta del modelo: tokens de la vuelta y, si hubo tool_use,
             # `tools` = [{name, args}] con rutas, rangos y patrones (nunca lo que devolvieron).
             "per_iteration": [],
@@ -482,29 +484,44 @@ class BaseAgent(ABC):
                     block.name, kwargs, getattr(self.config, "REPOS", {})
                 )
                 output = path_error or tool_fn(**kwargs)
+                # Redacción antes de que el resultado viaje al modelo (core/security.py).
+                content, _ = security.redact(str(output))
                 if getattr(self.config, "DEBUG", False):
-                    console.print(f"    [dim]result:[/dim] {str(output)[:600]}")
+                    console.print(f"    [dim]result:[/dim] {content[:600]}")
                 results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": str(output),
+                        "content": content,
                     }
                 )
             except Exception as exc:  # noqa: BLE001
+                content, _ = security.redact(f"ERROR: {exc}")
                 results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": f"ERROR: {exc}",
+                        "content": content,
                         "is_error": True,
                     }
                 )
+            self._note_security()
         # Se cuelga de la vuelta que pidió las tools (la última entrada de per_iteration).
         usage = getattr(self, "last_usage", None)
         if logged and usage and usage.get("per_iteration"):
             usage["per_iteration"][-1]["tools"] = logged
         return results
+
+    def _note_security(self) -> None:
+        """Acumula exclusiones y redacciones de la tool recién ejecutada en last_usage."""
+        stats = security.drain_stats()
+        usage = getattr(self, "last_usage", None)
+        if not isinstance(usage, dict):
+            return
+        sec = usage.setdefault("security", {"excluded": 0, "redacted": {}})
+        sec["excluded"] = sec.get("excluded", 0) + stats["excluded"]
+        for kind, n in stats["redacted"].items():
+            sec["redacted"][kind] = sec["redacted"].get(kind, 0) + n
 
     def _extract_text(self, response) -> str:
         return " ".join(b.text for b in response.content if hasattr(b, "text")).strip()
@@ -514,12 +531,13 @@ class BaseAgent(ABC):
         try:
             log_dir = self.config.OUTPUT_DIR / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
+            # Lo que toca disco pasa por la misma redacción que lo que va al modelo.
             entry = {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "agent": self.name,
                 "iterations": self.iteration_count,
-                "task": task,
-                "result_preview": result[:500],
+                "task": security.redact(task)[0],
+                "result_preview": security.redact(result[:500])[0],
                 "usage": self.last_usage,
             }
             with (log_dir / "agent_runs.jsonl").open("a", encoding="utf-8") as fh:

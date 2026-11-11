@@ -20,7 +20,7 @@ from rich.panel import Panel
 
 from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
-from minka.core import metrics, render
+from minka.core import metrics, render, security
 from minka.core.memory.conversation_memory import ConversationMemory
 from minka.core.memory.live_context import load_live_context, wants_live_context
 from minka.core.orchestrator import (
@@ -331,6 +331,11 @@ class Orchestrator:
                 "truncated",
             ):
                 totals[key] = totals.get(key, 0) + usage.get(key, 0)
+            sec = usage.get("security") or {}
+            totals["security_excluded"] = totals.get("security_excluded", 0) + int(sec.get("excluded") or 0)
+            red = totals.setdefault("redactions", {})
+            for kind, n in (sec.get("redacted") or {}).items():
+                red[kind] = red.get(kind, 0) + int(n)
         except Exception:  # noqa: BLE001 — métricas best-effort
             pass
 
@@ -411,7 +416,7 @@ class Orchestrator:
                 run_id=self.last_run_id,
                 source=os.getenv(SOURCE_ENV) or self.source,
                 project=getattr(config, "ACTIVE_PROJECT", None),
-                cwd=os.getcwd(),
+                cwd=metrics.safe_cwd(os.getcwd()),
                 router=self.last_router,
                 plan=self.last_plan,
                 fix_loop_iters=self.fix_loop_iters,
@@ -421,7 +426,7 @@ class Orchestrator:
                 reason=self.last_reason,
                 confidence=self.last_confidence,
                 planner_error=getattr(self.last_decision, "planner_error", None),
-                reasoning=getattr(self.last_decision, "reasoning", None),
+                reasoning=security.redact(getattr(self.last_decision, "reasoning", None) or "")[0] or None,
                 planner_retries=getattr(self.last_decision, "retries", 0),
                 ends_with_offer=self.last_ends_with_offer,
                 closings_removed=self.last_closings_removed,

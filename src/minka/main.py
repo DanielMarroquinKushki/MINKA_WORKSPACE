@@ -931,7 +931,9 @@ def stats(
         f"{agg['citations_missing']}/{agg['citations_total']}     afirmaciones sin respaldo: "
         f"{agg['claims_unsupported']}/{agg['claims_checked']} (doc {agg['claims_doc']}, "
         f"bloques propuestos {agg['blocks_proposed']})"
-        f"     salidas cortadas: {agg['truncated_outputs']}[/dim]"
+        f"     salidas cortadas: {agg['truncated_outputs']}"
+        f"     excluidos por política: {agg['security_excluded']}     redacciones: "
+        f"{' · '.join(f'{k} {v}' for k, v in sorted(agg['redactions'].items())) or 0}[/dim]"
     )
     hashes = agg.get("prompt_hashes") or {}
     if hashes:
@@ -1002,6 +1004,29 @@ def knowledge_check(
     results = citations.check_project(config, active)
     console.print(citations.format_report(results), markup=False, soft_wrap=True)
     if citations.broken(results):
+        raise typer.Exit(code=1)
+
+
+@knowledge_app.command(
+    "scan",
+    help="Busca secretos en knowledge/ del proyecto (sin LLM): ruta:línea y tipo, nunca el valor. "
+    "Exit 1 si hay hallazgos de alta confianza; hex/base64 largos solo se marcan 'revisar'.",
+)
+def knowledge_scan(
+    project: str = typer.Option(None, "--project", help="Proyecto a revisar (default: el activo)."),
+):
+    from minka.core import security
+
+    _activate_project(project, quiet=True, required=False)
+    active = getattr(config, "ACTIVE_PROJECT", None)
+    if not active:
+        console.print("[red]No hay proyecto activo: usa --project o DEFAULT_PROJECT.[/red]")
+        raise typer.Exit(code=2)
+    root = Path(config.PROJECTS_DIR) / active / "knowledge"
+    hits = security.scan_tree(root, getattr(config, "RISK_PATTERNS", None))
+    console.print(f"knowledge de {active}: {root}", markup=False)
+    console.print(security.format_scan(hits), markup=False, highlight=False)
+    if any(h["level"] == "fallo" for h in hits):
         raise typer.Exit(code=1)
 
 

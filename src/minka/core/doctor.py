@@ -210,6 +210,21 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
             critical=False,
         )
     )
+    if project_ok:
+        from minka.core import security
+
+        hits = security.scan_tree(projects_dir / project / "knowledge", getattr(cfg, "RISK_PATTERNS", None))
+        fails = sum(1 for h in hits if h["level"] == "fallo")
+        review = len(hits) - fails
+        checks.append(
+            Check(
+                "Secretos en knowledge",
+                fails == 0,
+                "sin hallazgos" if not hits else f"{fails} fallo(s), {review} a revisar",
+                "Corre `minka knowledge scan` y retira los valores: todo el knowledge viaja al modelo.",
+                critical=False,
+            )
+        )
     return checks
 
 

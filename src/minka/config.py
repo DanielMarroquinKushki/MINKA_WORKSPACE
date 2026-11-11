@@ -167,6 +167,16 @@ CONTEXT_NEXT_MAX_CHARS = int(os.getenv("CONTEXT_NEXT_MAX_CHARS", "12000"))
 # Verificador determinista de afirmaciones (core/orchestrator/claim_check.py): identificadores
 # en backticks, bloques de código y cifras contra REPOS y el resultado previo; anota "⚠ sin respaldo".
 VERIFY_CLAIMS_ENABLED = os.getenv("VERIFY_CLAIMS_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+# Seguridad en la capa de tools (core/security.py). Ningún agente lee, lista, indexa ni muestra en
+# un diff los archivos cuyo nombre o carpeta coincida con estos patrones; el proyecto los amplía
+# con EXCLUDE_PATTERNS_EXTRA en projects/<p>/config.py. Cada exclusión cuenta en métricas.
+EXCLUDE_PATTERNS: tuple = (
+    ".env*", "*.pem", "*.key", "*.p12", "*.jks", "id_rsa*", "credentials", "secrets*", ".aws", ".ssh",
+)
+EXCLUDE_PATTERNS_EXTRA: tuple = ()
+# Redacción de secretos de alta confianza en el resultado de cada tool antes de ir al modelo y en
+# agent_runs.jsonl (claves AWS, llaves privadas, JWT, Bearer, PAN válido por Luhn). Nunca hex/KCV/alias.
+SECRET_REDACTION_ENABLED = os.getenv("SECRET_REDACTION_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 AUTO_COMMIT = False  # True solo en Nivel 5+
 AUTO_BRANCH = True  # Siempre crea rama antes de escribir
 BRANCH_PREFIX = "agent/"

@@ -274,9 +274,11 @@ def index_repos(config, only_changed: bool = True) -> dict:
 
         # Archivos de código del STACK del proyecto (core/stacks.py): *.go salvo vendor/ por
         # defecto; *.py, *.ts… cuando el proyecto declara otro stack.
-        from minka.core import stacks
+        from minka.core import security, stacks
 
-        go_files = list(stacks.code_files(repo_root))
+        all_files = list(stacks.code_files(repo_root))
+        go_files = [f for f in all_files if not security.is_excluded(f)]
+        security.note_excluded(len(all_files) - len(go_files))
         on_disk = {str(f) for f in go_files}
 
         for go_file in go_files:
@@ -368,7 +370,9 @@ def index_knowledge(config, only_changed: bool = True) -> dict:
         indexed = _indexed_files(collection, {"source": source})
         source_stats = {"files": 0, "chunks": 0, "skipped": 0, "purged": 0, "commit": commit}
 
-        md_files = list(root.rglob("*.md"))
+        from minka.core import security
+
+        md_files = [f for f in root.rglob("*.md") if not security.is_excluded(f)]
         on_disk = {str(f) for f in md_files}
 
         for md_file in md_files:

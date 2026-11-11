@@ -8,6 +8,7 @@ de ChromaDB (RERANK_CANDIDATES) y se reordenan con un cross-encoder local
 degrada a "sin rerank" si el modelo no está disponible.
 """
 
+from minka.core import security
 from minka.core.tools.rag.chroma_client import get_client
 from minka.core.tools.rag.indexer import get_or_create_collection
 
@@ -83,6 +84,9 @@ def semantic_search(
             }
             if rerank_score is not None:
                 item["rerank_score"] = rerank_score
+            if item.get("file") and security.is_excluded(item["file"]):
+                security.note_excluded()
+                continue
             output.append(item)
 
         return output

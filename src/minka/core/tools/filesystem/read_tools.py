@@ -7,6 +7,8 @@ tool_result de la API de Anthropic). No mutan estado.
 
 from pathlib import Path
 
+from minka.core import security
+
 # Límite de seguridad para no volcar archivos enormes al contexto.
 _MAX_CHARS = 200_000
 
@@ -21,6 +23,8 @@ def read_file(path: str, start_line: int = 1, end_line: int = 0) -> str:
         end_line: última línea inclusive. 0 = hasta el final.
     """
     p = Path(path)
+    if security.is_excluded(p):
+        return security.excluded_result(p)
     if p.is_dir():
         return (
             f"ERROR: {path} es un DIRECTORIO, no un archivo. read_file lee un "
@@ -85,6 +89,9 @@ def scan_directory(path: str, max_depth: int = 2, include_ext: str | None = None
         for entry in entries:
             if entry.name in skip:
                 continue
+            if security.is_excluded(entry):
+                excluded[0] += 1
+                continue
             rel = entry.relative_to(root)
             if entry.is_dir():
                 out.append(f"{'  ' * depth}{rel}/")
@@ -92,11 +99,13 @@ def scan_directory(path: str, max_depth: int = 2, include_ext: str | None = None
             elif not include_ext or entry.suffix == include_ext:
                 out.append(f"{'  ' * depth}{rel}")
 
+    excluded = [0]
     walk(root, 0)
+    security.note_excluded(excluded[0])
     result = "\n".join(out)
     if len(result) > _MAX_CHARS:
         result = result[:_MAX_CHARS] + "\n... [TRUNCADO]"
-    return result or "[sin archivos que coincidan]"
+    return (result or "[sin archivos que coincidan]") + security.excluded_footer(excluded[0])
 
 
 def list_files(path: str, pattern: str | None = None) -> str:
@@ -122,5 +131,8 @@ def list_files(path: str, pattern: str | None = None) -> str:
     from minka.core import stacks
 
     skip = {"vendor", "node_modules", *stacks.profile().skip_dirs}
-    matches = [str(p) for p in root.rglob(pattern) if not any(part in skip for part in p.parts)]
-    return "\n".join(sorted(matches)) or "[sin coincidencias]"
+    candidates = [p for p in root.rglob(pattern) if not any(part in skip for part in p.parts)]
+    matches = [str(p) for p in candidates if not security.is_excluded(p)]
+    excluded = len(candidates) - len(matches)
+    security.note_excluded(excluded)
+    return ("\n".join(sorted(matches)) or "[sin coincidencias]") + security.excluded_footer(excluded)

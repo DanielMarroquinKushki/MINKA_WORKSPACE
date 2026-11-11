@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Pre-commit versionado de minka: escanea lo STAGED en busca de secretos (core/security.py).
+# No está activo por defecto. Para activarlo en tu clon:
+#     git config core.hooksPath .githooks
+# Para desactivarlo:  git config --unset core.hooksPath
+# Bloquea el commit solo con hallazgos de alta confianza (claves AWS, llaves privadas, JWT,
+# API keys, asignaciones password/secret/token); hex o base64 largos solo avisan.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+[ -z "$STAGED" ] && exit 0
+PY="python3"
+if [ -x "$ROOT/.venv/bin/python" ]; then PY="$ROOT/.venv/bin/python"; fi
+printf '%s\n' "$STAGED" | "$PY" -I - "$ROOT" <<'PYEOF'
+import subprocess, sys
+root = sys.argv[1]
+sys.path.insert(0, f"{root}/src")
+try:
+    from minka.core.security import REVIEW_IDS  # noqa: F401
+    from minka.core.knowledge.extractor import SECRET_PATTERNS
+except Exception:
+    # Sin dependencias del paquete: usa solo los patrones (no requieren terceros).
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("extractor", f"{root}/src/minka/core/knowledge/extractor.py")
+    SECRET_PATTERNS = None
+import re
+patterns = SECRET_PATTERNS or [
+    ("AWS_ACCESS_KEY", r"AKIA[0-9A-Z]{16}"), ("PRIVATE_KEY", r"BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY"),
+    ("JWT", r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}"), ("API_KEY_SK", r"\bsk-[A-Za-z0-9_-]{20,}"),
+    ("LONG_HEX", r"\b[A-Fa-f0-9]{40,}\b"), ("LONG_BASE64", r"[A-Za-z0-9+/]{40,}={0,2}"),
+    ("CREDENTIAL_ASSIGN", r"(?i)\b(password|passwd|secret|token|api_key)\s*[:=]\s*[\"'][^\"']{8,}[\"']"),
+]
+review = {"LONG_HEX", "LONG_BASE64"}
+fails = warns = 0
+for path in sys.stdin.read().split():
+    try:
+        text = subprocess.run(["git", "-C", root, "show", f":{path}"], capture_output=True, text=True, check=True).stdout
+    except subprocess.CalledProcessError:
+        continue
+    for n, line in enumerate(text.splitlines(), 1):
+        for sid, rx in patterns:
+            if re.search(rx, line):
+                level = "revisar" if sid in review else "FALLO"
+                print(f"  {path}:{n} ({sid}) [{level}]")
+                fails += level == "FALLO"; warns += level != "FALLO"
+                break
+if fails:
+    print(f"pre-commit: {fails} secreto(s) de alta confianza en lo staged. Retira el valor o usa git commit --no-verify si es un falso positivo.")
+    sys.exit(1)
+if warns:
+    print(f"pre-commit: {warns} hallazgo(s) a revisar (hex/base64 largos); no bloquean.")
+PYEOF

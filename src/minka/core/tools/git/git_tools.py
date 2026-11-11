@@ -10,6 +10,7 @@ Se usa subprocess con `git -C <repo>` para apuntar al repo correcto sin cambiar
 el cwd del proceso.
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -38,12 +39,30 @@ def _slugify(reason: str, max_len: int = 40) -> str:
 
 
 def show_diff(repo_path: str, staged: bool = False) -> str:
-    """Muestra el diff de trabajo (o del staging si staged=True)."""
+    """Muestra el diff de trabajo (o del staging si staged=True), sin los archivos excluidos."""
     args = ["diff"] + (["--staged"] if staged else [])
     code, out, err = _run_git(repo_path, args)
     if code != 0:
         return f"ERROR git diff: {err}"
-    return out or "[sin cambios]"
+    return strip_excluded_diff(out) or "[sin cambios]"
+
+
+def strip_excluded_diff(diff: str) -> str:
+    """Quita las secciones `diff --git a/x b/x` cuya ruta está excluida por política."""
+    from minka.core import security
+
+    if not diff:
+        return diff
+    sections = re.split(r"(?m)^(?=diff --git )", diff)
+    kept, dropped = [], 0
+    for sec in sections:
+        m = re.match(r"diff --git a/(\S+) b/", sec)
+        if m and security.is_excluded(m.group(1)):
+            dropped += 1
+            continue
+        kept.append(sec)
+    security.note_excluded(dropped)
+    return "".join(kept).rstrip("\n") + security.excluded_footer(dropped)
 
 
 def git_log(repo_path: str, n: int = 10) -> str:

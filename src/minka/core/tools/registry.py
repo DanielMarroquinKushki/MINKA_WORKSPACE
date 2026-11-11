@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from minka.config_loader import config
+from minka.core import security
 from minka.core.tools.analysis.dependency_mapper import check_version_drift, map_dependencies
 from minka.core.tools.analysis.go_analyzer import (
     check_core_version,
@@ -451,6 +452,8 @@ def resolve_repo_paths(tool_name: str, kwargs: dict, repos: dict | None) -> tupl
             candidate = Path(value).expanduser().resolve()
             if not any(candidate.is_relative_to(root) for root in allowed):
                 return kwargs, f"ERROR: '{value}' está {_OUTSIDE}."
+        if security.is_excluded(candidate):
+            return kwargs, security.excluded_result(candidate)
         out[key] = str(candidate)
     return out, None
 

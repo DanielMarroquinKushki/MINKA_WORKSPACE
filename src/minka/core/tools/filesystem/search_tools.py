@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from minka.core import security
+
 _HAS_RG = shutil.which("rg") is not None
 _MAX_HITS = 300
 
@@ -23,7 +25,10 @@ def _python_grep(pattern: str, root: Path, glob: str) -> list[str]:
 
     hits: list[str] = []
     for f in root.rglob(glob):
-        if "vendor" in f.parts or "node_modules" in f.parts or not f.is_file():
+        if "vendor" in f.parts or "node_modules" in f.parts or ".git" in f.parts or not f.is_file():
+            continue
+        if security.is_excluded(f):
+            security.note_excluded()
             continue
         try:
             for n, line in enumerate(
@@ -37,6 +42,26 @@ def _python_grep(pattern: str, root: Path, glob: str) -> list[str]:
         except Exception:  # noqa: BLE001
             continue
     return hits
+
+
+def _rg_exclude_globs() -> list[str]:
+    """`--glob !patrón` por cada patrón excluido (rg aplica los globs a cada componente)."""
+    out: list[str] = []
+    for pat in security.exclude_patterns():
+        out += ["--glob", f"!{pat.rstrip('/')}"]
+    return out
+
+
+def _drop_excluded_hits(lines: list[str]) -> list[str]:
+    """Defensa en profundidad: quita las líneas `ruta:n: …` cuya ruta esté excluida."""
+    kept = []
+    for line in lines:
+        path = line.split(":", 1)[0]
+        if path and security.is_excluded(path):
+            security.note_excluded()
+            continue
+        kept.append(line)
+    return kept
 
 
 def grep_code(pattern: str, path: str, glob: str | None = None) -> str:
@@ -75,6 +100,7 @@ def grep_code(pattern: str, path: str, glob: str | None = None) -> str:
                     "!vendor",
                     "--glob",
                     "!node_modules",
+                    *_rg_exclude_globs(),
                     pattern,
                     str(root),
                 ],
@@ -82,7 +108,7 @@ def grep_code(pattern: str, path: str, glob: str | None = None) -> str:
                 text=True,
                 timeout=30,
             )
-            out = proc.stdout.strip().splitlines()[:_MAX_HITS]
+            out = _drop_excluded_hits(proc.stdout.strip().splitlines())[:_MAX_HITS]
             return "\n".join(out) or "[sin coincidencias]"
         except Exception:  # noqa: BLE001 — si rg falla, cae al fallback
             pass
