@@ -17,6 +17,9 @@ from minka.core.pricing import PRICING_VERSION, baseline_usd, cost_usd
 # Las llamadas del planner, 4R y _review_decision aún no se contabilizan.
 SCOPE_NOTE = "(sin planner/4R)"
 
+# Fuentes que solo se ven pidiéndolas con --source (evaluaciones, no uso real).
+EXCLUDED_SOURCES = frozenset({"eval_quality"})
+
 TOKEN_KEYS = (
     "requests",
     "input_tokens",
@@ -205,6 +208,9 @@ def aggregate(
         records = [r for r in records if r.get("project") == project]
     if source:
         records = [r for r in records if r.get("source") == source]
+    else:
+        # Las corridas de `minka evals quality` no entran en los agregados del día/mes.
+        records = [r for r in records if r.get("source") not in EXCLUDED_SOURCES]
     if agent:
         agent = _short(agent)
         records = [

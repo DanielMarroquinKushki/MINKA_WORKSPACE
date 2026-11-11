@@ -990,6 +990,63 @@ def evals_routing(
         console.print(f"[dim]Reporte: {json_out}[/dim]")
 
 
+@evals_app.command(
+    "quality",
+    help="Golden set del proyecto con verificación determinista (git grep, citas, conteos; sin juez LLM). "
+    "Humo: --runs 1 y tope $6; cierre: --runs 3 con su propio --max-usd. Las corridas van con "
+    "MINKA_SOURCE=eval_quality y no entran en `minka stats`.",
+)
+def evals_quality(
+    project: str = typer.Option(None, "--project", help="Proyecto (default: el activo)."),
+    runs: int = typer.Option(1, "--runs", min=1, max=5, help="Corridas por caso (humo 1, cierre 3)."),
+    max_usd: float = typer.Option(None, "--max-usd", help="Tope de gasto; default 6.0 (humo) o 15.0 con --runs 3."),
+    json_out: Path = typer.Option(None, "--json-out", help="Reporte completo en JSON (sin respuestas)."),
+    refresh: str = typer.Option(None, "--refresh", help="Reescribe repo_commit del caso <id> tras revisión humana y sale."),
+    draft: bool = typer.Option(False, "--draft", help="Escribe borradores 'sin revisar' desde knowledge/extracted y sale ($0)."),
+    template: bool = typer.Option(False, "--template", help="Usa la plantilla genérica del paquete en vez del cases.json del proyecto."),
+):
+    from minka.core.evaluator import quality_evals as qe
+
+    _activate_project(project, quiet=True, required=False)
+    active = getattr(config, "ACTIVE_PROJECT", None)
+    if not active and not template:
+        console.print("[red]No hay proyecto activo: usa --project o DEFAULT_PROJECT.[/red]")
+        raise typer.Exit(code=2)
+    if refresh:
+        ok, msg = qe.refresh_commit(config, active, refresh)
+        console.print(msg, markup=False)
+        raise typer.Exit(code=0 if ok else 1)
+    if draft:
+        _, msg = qe.draft_cases(config, active)
+        console.print(msg, markup=False)
+        raise typer.Exit(code=0)
+    cases = qe.load_cases(active or "", config, template=template)
+    if not cases:
+        console.print(f"[red]Sin casos: crea projects/{active}/evals/cases.json o usa --draft.[/red]")
+        raise typer.Exit(code=2)
+    if max_usd is None:
+        max_usd = qe.DEFAULT_MAX_USD if runs == 1 else 15.0
+    _require_llm_backend()
+    if getattr(config, "USE_BEDROCK", False):
+        ok, msg = config.get_aws_session().ensure_sso_login()
+        if not ok:
+            console.print(msg, markup=False)
+            raise typer.Exit(code=1)
+    medians = qe.route_medians()
+    console.print(
+        f"[dim]{len(cases)} casos × {runs} corrida(s) · tope ${max_usd:.2f} · medianas por ruta: "
+        + " · ".join(f"{k} ${v:.3f}" for k, v in sorted(medians.items())) + "[/dim]"
+    )
+    report = qe.evaluate(cases, getattr(config, "REPOS", {}), runs=runs, max_usd=max_usd, medians=medians)
+    console.print(qe.format_report(report), markup=False, soft_wrap=True)
+    if json_out:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[dim]Reporte: {json_out}[/dim]")
+    if report.get("stopped"):
+        raise typer.Exit(code=3)
+
+
 knowledge_app = typer.Typer(help="Mantenimiento del knowledge del proyecto (sin LLM).")
 app.add_typer(knowledge_app, name="knowledge")
 

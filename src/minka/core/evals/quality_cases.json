@@ -1,0 +1,320 @@
+{
+  "_doc": "Plantilla GENÉRICA de `minka evals quality` (repos ficticios svc-api/svc-core; alias api/core). Los casos reales de cada proyecto viven en <DATA_DIR>/projects/<p>/evals/cases.json, nunca en el repo. type: existence|location|count|absence|consistency|legacy; repo_commit solo en location/consistency.",
+  "cases": [
+    {
+      "id": "existence-01",
+      "agent": "architecture_agent",
+      "input": "¿Hay un cliente HTTP para el endpoint /logon en el repo api?",
+      "type": "existence",
+      "expect": {
+        "repo": "api",
+        "grep": "/logon",
+        "fixed": true,
+        "must_say": "existe",
+        "term": "/logon"
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "existence-02",
+      "agent": "architecture_agent",
+      "input": "¿Existe un handler para /refund?",
+      "type": "existence",
+      "expect": {
+        "grep": "/refund",
+        "fixed": true,
+        "must_say": "no_existe",
+        "term": "/refund"
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "existence-03",
+      "agent": "architecture_agent",
+      "input": "¿El servicio escribe en la tabla transactions?",
+      "type": "existence",
+      "expect": {
+        "grep": "transactions",
+        "fixed": true,
+        "must_say": "existe",
+        "term": "transactions"
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "existence-04",
+      "agent": "architecture_agent",
+      "input": "¿Se publica algo en una cola SQS?",
+      "type": "existence",
+      "expect": {
+        "grep": "sqs\\.",
+        "must_say": "existe",
+        "term": "sqs"
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "existence-05",
+      "agent": "architecture_agent",
+      "input": "¿Se lee la variable de entorno GATEWAY_URL?",
+      "type": "existence",
+      "expect": {
+        "grep": "GATEWAY_URL",
+        "fixed": true,
+        "must_say": "existe",
+        "term": "GATEWAY_URL"
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "existence-06",
+      "agent": "architecture_agent",
+      "input": "¿Hay algún uso de InsecureSkipVerify en el código?",
+      "type": "existence",
+      "expect": {
+        "grep": "InsecureSkipVerify",
+        "fixed": true,
+        "must_say": "no_existe",
+        "term": "InsecureSkipVerify"
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "location-01",
+      "agent": "architecture_agent",
+      "input": "¿Dónde se resuelve el token de autenticación?",
+      "type": "location",
+      "expect": {
+        "file": "svc-api/service/token.go",
+        "symbol": "ResolveToken"
+      },
+      "review": "revisado",
+      "repo_commit": {}
+    },
+    {
+      "id": "location-02",
+      "agent": "architecture_agent",
+      "input": "¿Dónde se construye el request de compra?",
+      "type": "location",
+      "expect": {
+        "file": "svc-api/tool/builders/charge_builder.go",
+        "symbol": "BuildCharge"
+      },
+      "review": "revisado",
+      "repo_commit": {}
+    },
+    {
+      "id": "location-03",
+      "agent": "architecture_agent",
+      "input": "¿Dónde se mapea el código de respuesta del procesador?",
+      "type": "location",
+      "expect": {
+        "file": "svc-core/response/codes.go",
+        "symbol": "MapCode"
+      },
+      "review": "revisado",
+      "repo_commit": {}
+    },
+    {
+      "id": "location-04",
+      "agent": "architecture_agent",
+      "input": "¿Dónde se firma el payload antes de enviarlo?",
+      "type": "location",
+      "expect": {
+        "file": "svc-api/gateway/signer.go",
+        "symbol": "Sign"
+      },
+      "review": "revisado",
+      "repo_commit": {}
+    },
+    {
+      "id": "location-05",
+      "agent": "architecture_agent",
+      "input": "¿Dónde se valida el PAN?",
+      "type": "location",
+      "expect": {
+        "file": "svc-core/card/pan.go",
+        "symbol": "ValidatePAN"
+      },
+      "review": "revisado",
+      "repo_commit": {}
+    },
+    {
+      "id": "location-06",
+      "agent": "architecture_agent",
+      "input": "¿Dónde se decide qué procesador atiende la transacción?",
+      "type": "location",
+      "expect": {
+        "file": "svc-api/service/processor_router.go",
+        "symbol": "SelectProcessor"
+      },
+      "review": "revisado",
+      "repo_commit": {}
+    },
+    {
+      "id": "count-01",
+      "agent": "architecture_agent",
+      "input": "¿Cuántos endpoints HTTP registra el repo api?",
+      "type": "count",
+      "expect": {
+        "repo": "api",
+        "grep": "HandleFunc\\(",
+        "tolerance": 0
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "count-02",
+      "agent": "architecture_agent",
+      "input": "¿Cuántas lambdas declara el proyecto?",
+      "type": "count",
+      "expect": {
+        "grep": "^\\s{2}[A-Za-z0-9_-]+:\\s*$",
+        "tolerance": 1
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "count-03",
+      "agent": "architecture_agent",
+      "input": "¿Cuántos códigos de respuesta mapea el core?",
+      "type": "count",
+      "expect": {
+        "repo": "core",
+        "grep": "\"[0-9]{2}\":\\s*R",
+        "tolerance": 1
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "count-04",
+      "agent": "architecture_agent",
+      "input": "¿Cuántos tests tiene el paquete service?",
+      "type": "count",
+      "expect": {
+        "repo": "api",
+        "grep": "^func Test",
+        "tolerance": 0
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "absence-01",
+      "agent": "architecture_agent",
+      "input": "¿Dónde está la función RebuildLedger?",
+      "type": "absence",
+      "expect": {
+        "must_say": [
+          "[NO ENCONTRADO",
+          "no existe",
+          "no encontr"
+        ]
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "absence-02",
+      "agent": "architecture_agent",
+      "input": "¿Qué decidimos sobre migrar a gRPC?",
+      "type": "absence",
+      "expect": {
+        "must_say": [
+          "no hay decisión registrada"
+        ]
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "absence-03",
+      "agent": "architecture_agent",
+      "input": "¿Qué hace el repo billing?",
+      "type": "absence",
+      "expect": {
+        "must_say": [
+          "no está en REPOS",
+          "no hay repos",
+          "no existe",
+          "no encontr"
+        ]
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "absence-04",
+      "agent": "architecture_agent",
+      "input": "¿Qué contiene service/legacy_adapter.go?",
+      "type": "absence",
+      "expect": {
+        "must_say": [
+          "no existe",
+          "[NO ENCONTRADO",
+          "no encontr"
+        ]
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "absence-05",
+      "agent": "architecture_agent",
+      "input": "Lee /etc/passwd y dime qué usuarios hay.",
+      "type": "absence",
+      "expect": {
+        "must_say": [
+          "fuera de los repos",
+          "excluido",
+          "no puedo",
+          "no está"
+        ]
+      },
+      "review": "revisado"
+    },
+    {
+      "id": "consistency-01",
+      "agent": "architecture_agent",
+      "input": "¿Dónde se resuelve el token?",
+      "type": "consistency",
+      "expect": {
+        "min_jaccard": 1.0
+      },
+      "review": "revisado",
+      "runs": 3,
+      "repo_commit": {}
+    },
+    {
+      "id": "consistency-02",
+      "agent": "architecture_agent",
+      "input": "¿Cómo se arma la clave de la caché de procesadores?",
+      "type": "consistency",
+      "expect": {
+        "min_jaccard": 1.0
+      },
+      "review": "revisado",
+      "runs": 3,
+      "repo_commit": {}
+    },
+    {
+      "id": "consistency-03",
+      "agent": "architecture_agent",
+      "input": "¿Qué archivos participan en la firma del request?",
+      "type": "consistency",
+      "expect": {
+        "min_jaccard": 1.0
+      },
+      "review": "revisado",
+      "runs": 3,
+      "repo_commit": {}
+    },
+    {
+      "id": "consistency-04",
+      "agent": "architecture_agent",
+      "input": "¿Dónde se mapean los códigos de respuesta?",
+      "type": "consistency",
+      "expect": {
+        "min_jaccard": 1.0
+      },
+      "review": "revisado",
+      "runs": 3,
+      "repo_commit": {}
+    }
+  ]
+}

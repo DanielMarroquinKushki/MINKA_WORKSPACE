@@ -21,13 +21,21 @@ from pydantic import BaseModel, Field
 
 
 class EvalCase(BaseModel):
-    """Un caso del golden set."""
+    """Un caso del golden set. Los campos nuevos tienen default: los casos antiguos
+    (agent + input + must_mention + rubric) siguen válidos como `type="legacy"`."""
 
     id: str
-    agent: str
+    agent: str = "architecture_agent"
     input: str
     must_mention: list[str] = Field(default_factory=list)
     rubric: str = ""
+    # quality_evals.py: tipo de verificación determinista y su esperado.
+    type: str = "legacy"  # legacy | existence | location | count | absence | consistency
+    expect: dict = Field(default_factory=dict)
+    repo_commit: dict[str, str] = Field(default_factory=dict)  # alias → sha12 (location, consistency)
+    runs: int | None = None  # None = el --runs de la invocación
+    forced_agent: str | None = None  # solo si el caso lo pide; si no, por el router
+    review: str = "revisado"  # "sin revisar" = borrador de --draft: no se puntúa
 
 
 def load_golden_set(project: str, projects_dir: Path | None = None) -> list[EvalCase]:
