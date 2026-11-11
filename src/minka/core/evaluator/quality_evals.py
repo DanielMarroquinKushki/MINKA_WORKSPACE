@@ -159,6 +159,8 @@ def validate(case: EvalCase, repos: dict) -> tuple[str, str]:
         text = matches[0][1].read_text(encoding="utf-8", errors="ignore")
         if not re.search(rf"\b{re.escape(exp['symbol'])}\b", text):
             return STATE_STALE, "el símbolo esperado ya no está en el archivo"
+        if not symbol_defined(text, exp["symbol"]):
+            return STATE_STALE, "el símbolo se menciona pero no está DEFINIDO (func/type/const/var) en el archivo"
     if case.type in ("existence", "count"):
         if not exp.get("grep"):
             return STATE_STALE, f"{case.type} exige expect.grep"
@@ -173,6 +175,25 @@ def validate(case: EvalCase, repos: dict) -> tuple[str, str]:
 
 
 # -- puntuación determinista -----------------------------------------------------------------------
+
+
+def symbol_defined(text: str, symbol: str) -> bool:
+    """True si `symbol` está DEFINIDO en el archivo (no solo mencionado): Go func/método/type/
+    const/var (sueltos o dentro de un bloque `const (`/`var (`), Python def/class, JS/TS
+    function/class/const/let."""
+    name = re.escape(symbol)
+    patterns = (
+        rf"^\s*func\s+(\([^)]*\)\s*)?{name}\s*[\[(]",      # func X( / func (r *T) X( / func X[T any](
+        rf"^\s*type\s+{name}\b",
+        rf"^\s*(const|var)\s+{name}\b",
+        rf"^\s*{name}\s+[\w.\[\]*]+\s*=\s*",                 # dentro de const ( X Tipo = … )
+        rf"^\s*{name}\s*=\s*",                                 # dentro de const ( X = … ) / var ( X = … )
+        rf"^\s*(async\s+)?def\s+{name}\s*\(",
+        rf"^\s*class\s+{name}\b",
+        rf"^\s*(export\s+)?(async\s+)?function\s+{name}\s*\(",
+        rf"^\s*(export\s+)?(const|let|var)\s+{name}\s*=",
+    )
+    return any(re.search(pat, text, re.MULTILINE) for pat in patterns)
 
 
 def cited_files(output: str, roots: dict[str, Path]) -> dict[str, list[int]]:

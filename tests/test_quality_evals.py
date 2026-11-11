@@ -154,6 +154,29 @@ def test_caducado_por_simbolo_o_patron_que_ya_no_se_sostiene(repos):
     assert qe.validate(_case(type="existence", expect={"grep": "/logon", "fixed": True}, repo_commit={"api": "deadbeef0000"}), repos)[0] == qe.STATE_OK
 
 
+def test_location_exige_simbolo_definido_no_solo_mencionado(repos):
+    api = Path(repos["api"])
+    (api / "service" / "caller.go").write_text(
+        "package service\n\n// usa ResolveToken pero no lo define\nfunc Caller() string { return ResolveToken() }\n"
+    )
+    _git(api, "add", "-A")
+    _git(api, "commit", "-qm", "caller")
+    mentioned = _case(type="location", expect={"file": "svc-api/service/caller.go", "symbol": "ResolveToken"})
+    state, note = qe.validate(mentioned, repos)
+    assert state == qe.STATE_STALE and "DEFINIDO" in note
+    defined = _case(type="location", expect={"file": "svc-api/service/token.go", "symbol": "ResolveToken"})
+    assert qe.validate(defined, repos) == (qe.STATE_OK, "")
+    assert qe.validate(_case(type="location", expect={"file": "svc-api/service/caller.go", "symbol": "Caller"}), repos)[0] == qe.STATE_OK
+
+
+def test_symbol_defined_formas():
+    go = "package p\n\ntype Kind int\n\nconst (\n\tKindA Kind = iota\n\tLimit = 3\n)\n\nvar names = []string{}\n\nfunc (k Kind) String() string { return \"\" }\nfunc Plain() {}\n"
+    for sym in ("Kind", "KindA", "Limit", "names", "String", "Plain"):
+        assert qe.symbol_defined(go, sym), sym
+    assert not qe.symbol_defined(go, "Other") and not qe.symbol_defined("x := Plain()\n", "Plain")
+    assert qe.symbol_defined("def helper(x):\n    pass\n", "helper") and qe.symbol_defined("export const token = 1;\n", "token")
+
+
 def test_sin_revisar_no_se_puntua(repos):
     c = _case(type="absence", review="sin revisar")
     report = qe.evaluate([c], repos, runs=1, max_usd=6, runner=_runner(["x"]), medians=MEDIANS)
