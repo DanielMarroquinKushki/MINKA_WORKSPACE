@@ -104,6 +104,8 @@ class Orchestrator:
         # Voz de la respuesta (None = apagada: --completo, --debug, --plain). La fija main.py.
         self.voice: str | None = None
         self._decisions_cache: tuple[str | None, list] | None = None
+        # Citas → valores por pregunta, para avisar inconsistencias entre corridas (solo RAM).
+        self.consistency = claim_check.ConsistencyMemory()
         self.investigations: list[dict] = []
         self.last_investigation_line: str | None = None
         self._docs_cache: tuple[str | None, str] | None = None
@@ -117,6 +119,7 @@ class Orchestrator:
         return {
             "checked": 0, "unsupported": 0, "blocks_proposed": 0, "truncated": 0, "doc": 0,
             "decisions_used": 0, "decisions_unsupported": 0,
+            "inferred": 0, "inconsistent": 0,
         }
 
     def _verify_claims(self, result: str, request: str, agent) -> str:
@@ -128,10 +131,19 @@ class Orchestrator:
             previous = [request, *(s.get("result") or "" for s in self.state.steps)]
             truncated = bool((getattr(agent, "last_usage", None) or {}).get("truncated"))
             from minka.core.memory import decisions as _dec
+            from minka.core.tools.registry import ToolRegistry
 
+            usage = getattr(agent, "last_usage", None) or {}
+            tools_used = {
+                t.get("name") for step in usage.get("per_iteration", []) or [] for t in step.get("tools", []) or []
+            } if isinstance(usage, dict) else None
             checked = claim_check.verify(
                 result, self._citation_index(), previous, truncated=truncated, docs=self._knowledge_text(),
                 decisions=_dec.index(self._decisions()),
+                tool_names=frozenset(ToolRegistry.all_names()),
+                tools_used=tools_used,
+                consistency=self.consistency,
+                question=request,
             )
         except Exception:  # noqa: BLE001 — el verificador nunca rompe la respuesta
             return result
@@ -141,6 +153,8 @@ class Orchestrator:
         self.last_claims["doc"] += checked.doc_supported
         self.last_claims["truncated"] += 1 if truncated else 0
         self.last_claims["decisions_unsupported"] += checked.decisions_unsupported
+        self.last_claims["inferred"] += checked.claims_inferred
+        self.last_claims["inconsistent"] += checked.claims_inconsistent
         return checked.text
 
     def _citation_index(self) -> RepoIndex:
@@ -200,6 +214,7 @@ class Orchestrator:
         """Olvida el historial de la sesión (REPL /clear), incluida la investigación oculta."""
         self.memory.clear()
         self.investigations.clear()
+        self.consistency.clear()
 
     def investigation(self, turn: int | None = None) -> dict | None:
         """Investigación oculta del último pedido o del pedido `turn` (1-based en la sesión)."""

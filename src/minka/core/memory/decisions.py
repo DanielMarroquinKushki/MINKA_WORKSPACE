@@ -166,17 +166,52 @@ def load_decisions(config, project: str | None) -> list[Decision]:
         return []
 
 
-def select(decisions: list[Decision], request: str, limit: int = 3) -> list[Decision]:
-    """Hasta `limit` decisiones por términos en común con el pedido (título + texto), más recientes primero."""
+PREFIX_LEN = 5
+
+
+def _prefixes(terms: set[str], exclude: tuple[str, ...]) -> set[str]:
+    return {t[:PREFIX_LEN] for t in terms if len(t) >= PREFIX_LEN and t[:PREFIX_LEN] not in exclude}
+
+
+def _score(d: Decision, terms: set[str], prefixes: set[str] | None, exclude: tuple[str, ...]) -> int:
+    """Exacta: 2 (4 en el título). Prefijo de 5 letras: 1 (2 en el título), solo si se pide."""
+    title, text = _terms(d.title), _terms(d.text)
+    shared = terms & (title | text)
+    score = 2 * len(shared) + 2 * len(shared & title)
+    if prefixes:
+        covered = {t[:PREFIX_LEN] for t in shared}
+        tp, xp = _prefixes(title, exclude), _prefixes(text, exclude)
+        extra = (prefixes & (tp | xp)) - covered
+        score += len(extra) + len(extra & tp)
+    return score
+
+
+def select(
+    decisions: list[Decision],
+    request: str,
+    limit: int = 3,
+    prefix: bool | None = None,
+    prefix_exclude: tuple[str, ...] | None = None,
+) -> list[Decision]:
+    """Hasta `limit` decisiones por términos en común con el pedido (título + texto). Con `prefix`
+    (config CONTEXT_DECISIONS_PREFIX) y menos de 2 exactas, suma coincidencias por prefijo de 5
+    letras (anula/anular/anulación) con peso menor; `prefix_exclude` (CONTEXT_DECISIONS_PREFIX_EXCLUDE)
+    quita prefijos ambiguos ("proce"). Más puntos primero, luego la más reciente."""
+    from minka.config_loader import config
+
     terms = _terms(request)
     if not terms:
         return []
-    scored = []
-    for d in decisions:
-        shared = terms & (_terms(d.title) | _terms(d.text))
-        if shared:
-            scored.append((len(shared & _terms(d.title)) * 2 + len(shared), d.date or "", d))
-    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)  # más términos, luego más reciente
+    if prefix is None:
+        prefix = bool(getattr(config, "CONTEXT_DECISIONS_PREFIX", False))
+    exclude = tuple(prefix_exclude if prefix_exclude is not None else getattr(config, "CONTEXT_DECISIONS_PREFIX_EXCLUDE", ()) or ())
+    exact = [(s, d.date or "", d) for d in decisions if (s := _score(d, terms, None, exclude)) > 0]
+    if prefix and len(exact) < 2:
+        prefixes = _prefixes(terms, exclude)
+        scored = [(s, d.date or "", d) for d in decisions if (s := _score(d, terms, prefixes, exclude)) > 0]
+    else:
+        scored = exact
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
     return [d for _, _, d in scored[:limit]]
 
 

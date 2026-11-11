@@ -27,6 +27,9 @@ MARK_DOC = "(doc"
 MARK_DOC_BLOCK = "_(doc)_"
 MARK_PROPOSED = "_(propuesto)_"
 MARK_TRUNCATED = "_⚠ Respuesta cortada por tope de tokens (MAX_TOKENS)._"
+MARK_INFERRED = "(inferido sin herramienta"
+MARK_RUNTIME = "(depende de runtime)"
+MARK_INCONSISTENT = "⚠ inconsistente con la corrida anterior"
 
 MAX_TOKENS_CHECKED = 120  # tope de consultas a los repos por respuesta
 GREP_TIMEOUT = 10
@@ -41,6 +44,8 @@ _PROPOSED_RE = re.compile(
 )
 _PROPOSED_LANGS = ("diff", "patch")
 _BACKTICK_RE = re.compile(r"`([^`\n]{3,120})`")
+# Cadenas armadas en ejecución: placeholders de formato o plantillas; no son hallazgos del código.
+_RUNTIME_RE = re.compile(r"%[sdvq]|\$\{\w+\}|\{\w+\}|<\w+>\|<\w+>|Sprintf\(")
 _IDENT_SHAPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:[.:/-][A-Za-z0-9_]+)*(?:\(\))?$")
 _WORD_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b")
 _KEYWORDS = frozenset(
@@ -73,6 +78,10 @@ class ClaimResult:
     doc_supported: int = 0  # respaldados solo por el knowledge del proyecto
     decisions_checked: int = 0  # referencias ADR-nnn (con o sin fecha) comprobadas
     decisions_unsupported: int = 0
+    tools_named: int = 0  # nombres de herramientas en la respuesta (no se buscan en los repos)
+    claims_inferred: int = 0  # herramienta nombrada que el agente no ejecutó en este paso
+    runtime_strings: int = 0  # cadenas con placeholders: "depende de runtime", no hallazgo
+    claims_inconsistent: int = 0  # misma cita que una corrida anterior, valores distintos
     unsupported_tokens: list[str] = field(default_factory=list)
 
     @property
@@ -162,7 +171,9 @@ def load_project_docs(knowledge_dir: Path | None, subdirs: tuple[str, ...] = ("e
     return "\n".join(parts)
 
 
-def _looks_like_identifier(token: str) -> bool:
+def _looks_like_identifier(token: str, tool_names: frozenset[str] = frozenset()) -> bool:
+    if token.rstrip("()") in tool_names:
+        return False  # nombre de una herramienta del motor, no del código del proyecto
     if not _IDENT_SHAPE_RE.match(token) or cit.CITATION_RE.fullmatch(token.rstrip("()")):
         return False
     core = token.rstrip("()")
@@ -200,14 +211,22 @@ def verify(
     today: str | None = None,
     docs: str = "",
     decisions: dict[str, str | None] | None = None,
+    tool_names: frozenset[str] | None = None,
+    tools_used: set[str] | None = None,
+    consistency: "ConsistencyMemory | None" = None,
+    question: str | None = None,
 ) -> ClaimResult:
     """Texto anotado + contadores. Sin texto devuelve el mismo texto. `decisions`: id → fecha del
-    historial del proyecto, para comprobar referencias ADR-nnn (y su fecha, si la traen)."""
+    historial del proyecto. `tool_names`: nombres de tools del motor (no se verifican en repos);
+    `tools_used`: las que el agente ejecutó en este paso (las demás nombradas → "inferido sin
+    herramienta"). `consistency` + `question`: memoria de sesión de citas → valores por pregunta."""
     result = ClaimResult(text or "", truncated=truncated)
     if not text:
         return result
     evidence = Evidence(index, previous or [], docs)
     evidence.decisions = decisions or {}
+    evidence.tool_names = tool_names or frozenset()
+    evidence.tools_used = tools_used
     today = today or date.today().isoformat()
     lines = text.split("\n")
     out: list[str] = []
@@ -244,8 +263,65 @@ def verify(
     if truncated:
         out.append("")
         out.append(MARK_TRUNCATED)
+    if consistency is not None and question:
+        out = consistency.check_and_record(question, out, result)
     result.text = "\n".join(out)
     return result
+
+
+class ConsistencyMemory:
+    """Por pregunta normalizada: cita archivo:línea → identificadores y cifras de esa línea.
+    Solo en memoria de la sesión (nunca en disco); /clear la vacía."""
+
+    def __init__(self) -> None:
+        self._seen: dict[str, dict[str, frozenset[str]]] = {}
+
+    @staticmethod
+    def normalize(question: str) -> str:
+        import unicodedata
+
+        q = unicodedata.normalize("NFKD", question or "")
+        q = "".join(c for c in q if not unicodedata.combining(c)).lower()
+        return " ".join(re.findall(r"[a-z0-9]+", q))
+
+    @staticmethod
+    def values_by_citation(lines: list[str]) -> dict[str, frozenset[str]]:
+        out: dict[str, frozenset[str]] = {}
+        for line in lines:
+            if line.startswith(MARK_UNSUPPORTED) or line.startswith(MARK_INCONSISTENT):
+                continue
+            cites = [m.group(0) for m in cit.CITATION_RE.finditer(line) if m.group(2)]
+            if not cites:
+                continue
+            clean = cit.CITATION_RE.sub(" ", line)
+            clean = re.sub(r"\((doc|inferido|depende)[^)]*\)|⚠[^\n]*", " ", clean)
+            values = set(t.strip() for t in _BACKTICK_RE.findall(clean) if _IDENT_SHAPE_RE.match(t.strip()))
+            values |= set(_numbers_in(_BACKTICK_RE.sub(" ", clean), today=""))
+            for c in cites:
+                out[c] = frozenset(values) | out.get(c, frozenset())
+        return out
+
+    def check_and_record(self, question: str, lines: list[str], result: ClaimResult) -> list[str]:
+        key = self.normalize(question)
+        current = self.values_by_citation(lines)
+        previous = self._seen.get(key)
+        if previous:
+            out = []
+            for line in lines:
+                cites = [m.group(0) for m in cit.CITATION_RE.finditer(line) if m.group(2)]
+                bad = [c for c in cites if c in previous and previous[c] and current.get(c) and current[c] != previous[c]]
+                if bad and MARK_INCONSISTENT not in line:
+                    result.claims_inconsistent += len(bad)
+                    line = f"{line.rstrip()} {MARK_INCONSISTENT}"
+                out.append(line)
+            lines = out
+        merged = dict(previous or {})
+        merged.update(current)
+        self._seen[key] = merged
+        return lines
+
+    def clear(self) -> None:
+        self._seen.clear()
 
 
 def _check_block(block: list[str], lang: str, proposed: bool, evidence: Evidence, result: ClaimResult) -> str | None:
@@ -302,9 +378,23 @@ def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: st
         return line
     missing: list[str] = []
     doc_only: list[str] = []
+    inferred: list[str] = []
+    runtime: list[str] = []
+    tool_names: frozenset[str] = getattr(evidence, "tool_names", frozenset())
+    tools_used = getattr(evidence, "tools_used", None)
     for raw in _BACKTICK_RE.findall(line):
         token = raw.strip()
-        if not _looks_like_identifier(token):
+        core_name = token.rstrip("()")
+        if core_name in tool_names:
+            result.tools_named += 1
+            if tools_used is not None and core_name not in tools_used:
+                inferred.append(core_name)
+            continue
+        if _RUNTIME_RE.search(token):
+            result.runtime_strings += 1
+            runtime.append(token)
+            continue
+        if not _looks_like_identifier(token, tool_names):
             continue
         result.identifiers_checked += 1
         core = token.rstrip("()")
@@ -325,9 +415,14 @@ def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: st
             missing.append(token)
         elif kind == SUPPORT_DOC:
             doc_only.append(token)
-    if not missing and not doc_only:
+    if not missing and not doc_only and not inferred and not runtime:
         return line
     out = line.rstrip()
+    if runtime:
+        out = f"{out} {MARK_RUNTIME}"
+    if inferred:
+        result.claims_inferred += len(inferred)
+        out = f"{out} {MARK_INFERRED}: {', '.join(dict.fromkeys(inferred))})"
     if doc_only:
         result.doc_supported += len(doc_only)
         out = f"{out} {MARK_DOC}: {', '.join(dict.fromkeys(doc_only))})"

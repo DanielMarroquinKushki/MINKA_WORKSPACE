@@ -187,6 +187,10 @@ VOICE = os.getenv("VOICE", "cercana").strip().lower() or "cercana"
 CONTEXT_DECISIONS_ENABLED = os.getenv("CONTEXT_DECISIONS_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 CONTEXT_DECISIONS_MAX = int(os.getenv("CONTEXT_DECISIONS_MAX", "3"))
 CONTEXT_DECISIONS_MAX_TOKENS = int(os.getenv("CONTEXT_DECISIONS_MAX_TOKENS", "600"))
+# Coincidencia por prefijo de 5 letras en el selector (anula/anular/anulación) cuando la exacta
+# devuelve < 2. Apagada por defecto: medida sobre el historial real no añadió decisiones útiles.
+CONTEXT_DECISIONS_PREFIX = os.getenv("CONTEXT_DECISIONS_PREFIX", "false").strip().lower() in ("1", "true", "yes")
+CONTEXT_DECISIONS_PREFIX_EXCLUDE: tuple = ("proce", "trans", "servi", "respu")
 AUTO_COMMIT = False  # True solo en Nivel 5+
 AUTO_BRANCH = True  # Siempre crea rama antes de escribir
 BRANCH_PREFIX = "agent/"

@@ -946,7 +946,8 @@ def stats(
         f"     excluidos por política: {agg['security_excluded']}     redacciones: "
         f"{' · '.join(f'{k} {v}' for k, v in sorted(agg['redactions'].items())) or 0}"
         f"     decisiones usadas: {agg['decisions_used']} · referencias sin respaldo: "
-        f"{agg['decisions_unsupported']}[/dim]"
+        f"{agg['decisions_unsupported']}     inferidas sin herramienta: {agg['claims_inferred']} · "
+        f"inconsistentes: {agg['claims_inconsistent']}[/dim]"
     )
     hashes = agg.get("prompt_hashes") or {}
     if hashes:

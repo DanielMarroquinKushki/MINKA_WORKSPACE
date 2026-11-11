@@ -41,6 +41,15 @@ _PAN_RE = re.compile(r"(?<![\w.])\d{13,19}(?![\w.])")
 # Hallazgos del escaneo de árboles (knowledge, staged): qué IDs bloquean y cuáles solo se revisan.
 HIGH_CONFIDENCE_IDS = frozenset({"AWS_ACCESS_KEY", "PRIVATE_KEY", "JWT", "API_KEY_SK", "CREDENTIAL_ASSIGN"})
 REVIEW_IDS = frozenset({"LONG_HEX", "LONG_BASE64"})
+# Lista CERRADA de valores de prueba de los manuales: un hallazgo en una línea que los contenga es
+# nivel "ejemplo" (ni fallo ni revisar). Solo afecta al escaneo: la redacción en tiempo de ejecución
+# (redact) no mira esta lista ni las marcas.
+TEST_VALUES: tuple[str, ...] = ("0123456789ABCDEF", "FEDCBA9876543210")
+_REPEATED_RE = re.compile(r"(.)\1{15,}")  # 16+ veces el mismo carácter (AAAA…, 0000…)
+# Marca manual en el .md: por línea o por bloque. Cuentan aparte para que nada se silencie sin rastro.
+MARK_EXAMPLE_LINE = "<!-- ejemplo -->"
+MARK_EXAMPLE_START = "<!-- ejemplo:inicio -->"
+MARK_EXAMPLE_END = "<!-- ejemplo:fin -->"
 SCAN_EXTENSIONS = (".md", ".txt", ".yml", ".yaml", ".json", ".toml", ".py", ".env", ".ini", ".cfg")
 
 _stats: Counter = Counter()
@@ -133,11 +142,44 @@ def drain_stats() -> dict:
 # -- escaneo de árboles (knowledge, pre-commit) ---------------------------------------------------
 
 
-def scan_tree(root: Path, extra_rules: list | None = None) -> list[dict]:
-    """Hallazgos `{path, line, kind, level}` sobre los archivos de texto bajo `root`.
-    level = "fallo" (alta confianza) | "revisar" (hex/base64 largos: pueden ser hashes o KCV)."""
+def example_lines(text: str) -> dict[int, str]:
+    """Líneas (1-indexed) marcadas como ejemplo y por qué: "marca" (comentario) o "lista" (TEST_VALUES)."""
+    out: dict[int, str] = {}
+    in_block = False
+    for n, line in enumerate(text.splitlines(), 1):
+        if MARK_EXAMPLE_START in line:
+            in_block = True
+        if in_block or MARK_EXAMPLE_LINE in line:
+            out[n] = "marca"
+        elif any(v in line for v in TEST_VALUES) or _REPEATED_RE.search(line):
+            out[n] = "lista"
+        if MARK_EXAMPLE_END in line:
+            in_block = False
+    return out
+
+
+def _classify(text: str, label: str, extra_rules: list | None) -> list[dict]:
     from minka.core.knowledge.extractor import scan_secrets
 
+    examples = example_lines(text)
+    out: list[dict] = []
+    for hit in scan_secrets(text, label, extra_rules):
+        m = re.match(r"^(.*):(\d+) \(([A-Z_]+)\)$", hit)
+        if not m:
+            continue
+        kind, n = m.group(3), int(m.group(2))
+        if n in examples:
+            level, reason = "ejemplo", examples[n]
+        else:
+            level, reason = ("revisar" if kind in REVIEW_IDS else "fallo"), ""
+        out.append({"path": m.group(1), "line": n, "kind": kind, "level": level, "example": reason})
+    return out
+
+
+def scan_tree(root: Path, extra_rules: list | None = None) -> list[dict]:
+    """Hallazgos `{path, line, kind, level, example}` sobre los archivos de texto bajo `root`.
+    level = "fallo" (alta confianza) | "revisar" (hex/base64 largos) | "ejemplo" (TEST_VALUES o
+    marca `<!-- ejemplo -->`; `example` dice si fue "lista" o "marca")."""
     hits: list[dict] = []
     root = Path(root)
     if not root.is_dir():
@@ -151,35 +193,33 @@ def scan_tree(root: Path, extra_rules: list | None = None) -> list[dict]:
             text = f.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        rel = f.relative_to(root).as_posix()
-        for hit in scan_secrets(text, rel, extra_rules):
-            m = re.match(r"^(.*):(\d+) \(([A-Z_]+)\)$", hit)
-            if not m:
-                continue
-            kind = m.group(3)
-            level = "fallo" if kind in HIGH_CONFIDENCE_IDS or kind not in REVIEW_IDS else "revisar"
-            hits.append({"path": m.group(1), "line": int(m.group(2)), "kind": kind, "level": level})
+        hits.extend(_classify(text, f.relative_to(root).as_posix(), extra_rules))
     return hits
 
 
 def scan_text(text: str, label: str, extra_rules: list | None = None) -> list[dict]:
     """Igual que scan_tree pero sobre un texto ya leído (archivos staged del pre-commit)."""
-    from minka.core.knowledge.extractor import scan_secrets
+    return _classify(text, label, extra_rules)
 
-    out = []
-    for hit in scan_secrets(text, label, extra_rules):
-        m = re.match(r"^(.*):(\d+) \(([A-Z_]+)\)$", hit)
-        if m:
-            kind = m.group(3)
-            out.append({"path": m.group(1), "line": int(m.group(2)), "kind": kind,
-                        "level": "revisar" if kind in REVIEW_IDS else "fallo"})
-    return out
+
+def scan_summary(hits: list[dict]) -> dict:
+    fails = sum(1 for h in hits if h["level"] == "fallo")
+    review = sum(1 for h in hits if h["level"] == "revisar")
+    by_mark = sum(1 for h in hits if h["level"] == "ejemplo" and h.get("example") == "marca")
+    by_list = sum(1 for h in hits if h["level"] == "ejemplo" and h.get("example") == "lista")
+    return {"total": len(hits), "fails": fails, "review": review, "example_mark": by_mark, "example_list": by_list}
 
 
 def format_scan(hits: list[dict]) -> str:
     if not hits:
         return "Sin hallazgos."
-    lines = [f"  {h['path']}:{h['line']} ({h['kind']}) [{h['level']}]" for h in hits]
-    fails = sum(1 for h in hits if h["level"] == "fallo")
-    lines.append(f"{len(hits)} hallazgo(s): {fails} fallo(s), {len(hits) - fails} a revisar.")
+    lines = [
+        f"  {h['path']}:{h['line']} ({h['kind']}) [{h['level']}{' por ' + h['example'] if h.get('example') else ''}]"
+        for h in hits
+    ]
+    s = scan_summary(hits)
+    lines.append(
+        f"{s['total']} hallazgo(s): {s['fails']} fallo(s), {s['review']} a revisar, "
+        f"{s['example_mark'] + s['example_list']} ejemplo(s) ({s['example_mark']} por marca, {s['example_list']} por lista)."
+    )
     return "\n".join(lines)

@@ -214,13 +214,17 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
         from minka.core import security
 
         hits = security.scan_tree(projects_dir / project / "knowledge", getattr(cfg, "RISK_PATTERNS", None))
-        fails = sum(1 for h in hits if h["level"] == "fallo")
-        review = len(hits) - fails
+        s = security.scan_summary(hits)
+        fails, review = s["fails"], s["review"]
+        examples = s["example_mark"] + s["example_list"]
         checks.append(
             Check(
                 "Secretos en knowledge",
                 fails == 0,
-                "sin hallazgos" if not hits else f"{fails} fallo(s), {review} a revisar",
+                "sin hallazgos" if not hits else (
+                    f"{fails} fallo(s), {review} a revisar, {examples} ejemplo(s) "
+                    f"({s['example_mark']} por marca, {s['example_list']} por lista)"
+                ),
                 "Corre `minka knowledge scan` y retira los valores: todo el knowledge viaja al modelo.",
                 critical=False,
             )
