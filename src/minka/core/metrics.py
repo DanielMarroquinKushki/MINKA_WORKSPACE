@@ -137,6 +137,9 @@ def build_run_record(
         # Verificador: herramientas nombradas sin ejecutar e inconsistencias con corridas previas.
         "claims_inferred": int((claims or {}).get("inferred") or 0),
         "claims_inconsistent": int((claims or {}).get("inconsistent") or 0),
+        # Corridas interrumpidas por red/timeout/throttling/credenciales (parcial) y respuestas vacías.
+        "interrupted": int(totals.get("interrupted") or 0),
+        "empty_responses": int(totals.get("empty_response") or 0),
         # Seguridad en tools (core/security.py): archivos excluidos y redacciones por tipo, sin valores.
         "security_excluded": int(totals.get("security_excluded") or 0),
         "redactions": {k: int(v) for k, v in (totals.get("redactions") or {}).items()},
@@ -223,6 +226,7 @@ def aggregate(
     ok = fix_runs = fix_iters = repeated = capped = 0
     claims_checked = claims_unsupported = blocks_proposed = truncated_outputs = claims_doc = 0
     security_excluded = decisions_used = decisions_unsupported = claims_inferred = claims_inconsistent = 0
+    interrupted = empty_responses = 0
     redactions: Counter = Counter()
     offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
@@ -239,6 +243,8 @@ def aggregate(
         decisions_unsupported += r.get("decisions_unsupported") or 0
         claims_inferred += r.get("claims_inferred") or 0
         claims_inconsistent += r.get("claims_inconsistent") or 0
+        interrupted += r.get("interrupted") or 0
+        empty_responses += r.get("empty_responses") or 0
         redactions.update({k: int(v) for k, v in (r.get("redactions") or {}).items()})
         truncated_outputs += r.get("truncated_outputs") or 0
         if r.get("prompt_hash"):
@@ -299,6 +305,8 @@ def aggregate(
         "decisions_unsupported": decisions_unsupported,
         "claims_inferred": claims_inferred,
         "claims_inconsistent": claims_inconsistent,
+        "interrupted": interrupted,
+        "empty_responses": empty_responses,
         "truncated_outputs": truncated_outputs,
         "ends_with_offer": offers,
         "closings_removed": closings,

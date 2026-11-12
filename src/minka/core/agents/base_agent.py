@@ -121,6 +121,68 @@ FINAL_TURN_BLOCK = (
     "No llames más herramientas."
 )
 ITERATIONS_EXHAUSTED = "Máximo de iteraciones alcanzado sin respuesta final."
+INTERRUPTED_PREFIX = "⚠ corrida interrumpida:"
+EMPTY_RESPONSE = "⚠ el modelo no devolvió texto"
+# Códigos de botocore que significan credenciales/sesión, no servicio.
+_CREDENTIAL_CODES = {"UnauthorizedException", "ExpiredToken", "ExpiredTokenException", "AccessDeniedException",
+                     "UnrecognizedClientException", "InvalidSignatureException"}
+_THROTTLE_CODES = {"ThrottlingException", "TooManyRequestsException", "Throttling", "RequestLimitExceeded"}
+
+
+def transient_error_types() -> tuple:
+    """Errores del SDK de anthropic y de botocore que se convierten en resultado parcial.
+    Solo red, timeout, throttling, servicio (5xx) y credenciales; nunca errores de programación."""
+    import anthropic
+    from botocore import exceptions as be
+
+    return (
+        anthropic.APIConnectionError,  # incluye APITimeoutError
+        anthropic.RateLimitError,
+        anthropic.InternalServerError,
+        anthropic.AuthenticationError,
+        anthropic.PermissionDeniedError,
+        be.ClientError,
+        be.NoCredentialsError,
+        be.TokenRetrievalError,
+        be.UnauthorizedSSOTokenError,
+        be.SSOTokenLoadError,
+        be.EndpointConnectionError,
+        be.ReadTimeoutError,
+        be.ConnectTimeoutError,
+    )
+
+
+def classify_transient(exc: BaseException) -> str:
+    """timeout | red | throttling | credenciales | servicio."""
+    import anthropic
+    from botocore import exceptions as be
+
+    if isinstance(exc, (anthropic.APITimeoutError, be.ReadTimeoutError, be.ConnectTimeoutError)):
+        return "timeout"
+    if isinstance(exc, (anthropic.APIConnectionError, be.EndpointConnectionError)):
+        return "red"
+    if isinstance(exc, anthropic.RateLimitError):
+        return "throttling"
+    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError, be.NoCredentialsError,
+                        be.TokenRetrievalError, be.UnauthorizedSSOTokenError, be.SSOTokenLoadError)):
+        return "credenciales"
+    if isinstance(exc, be.ClientError):
+        code = str(((getattr(exc, "response", None) or {}).get("Error") or {}).get("Code", ""))
+        if code in _THROTTLE_CODES:
+            return "throttling"
+        if code in _CREDENTIAL_CODES:
+            return "credenciales"
+    return "servicio"
+
+
+def describe_transient(exc: BaseException, profile: str | None = None) -> str:
+    """Una línea para el dev, sin traceback."""
+    kind = classify_transient(exc)
+    line = f"{INTERRUPTED_PREFIX} {kind} ({type(exc).__name__})."
+    if kind == "credenciales":
+        prof = profile or getattr(config, "AWS_PROFILE", None) or "<perfil>"
+        line += f" Renueva con aws sso login --profile {prof}"
+    return line
 # Argumentos de tools que se registran en usage.per_iteration[].tools: rutas, rangos y
 # patrones. Nunca contenido (write_file, etc.) ni lo que la tool devolvió.
 TOOL_LOG_ARGS = (
@@ -189,6 +251,10 @@ class BaseAgent(ABC):
             "iterations_capped": 0,
             # 1 si la respuesta final se cortó por MAX_TOKENS (stop_reason max_tokens).
             "truncated": 0,
+            # 1 si la corrida se interrumpió por red/timeout/throttling/credenciales (parcial) o
+            # si el modelo devolvió texto vacío.
+            "interrupted": 0,
+            "empty_response": 0,
             # Archivos excluidos por política y redacciones por tipo (core/security.py), sin valores.
             "security": {"excluded": 0, "redacted": {}},
             # Una entrada por respuesta del modelo: tokens de la vuelta y, si hubo tool_use,
@@ -288,13 +354,18 @@ class BaseAgent(ABC):
                 prog.update(iteration=self.iteration_count, status="esperando al modelo")
                 self._mark_cache_tail(messages)
 
-                response = self.client.messages.create(
-                    model=self._model(),
-                    max_tokens=self.config.MAX_TOKENS,
-                    system=system,
-                    tools=self.tools,
-                    messages=messages,
-                )
+                try:
+                    response = self.client.messages.create(
+                        model=self._model(),
+                        max_tokens=self.config.MAX_TOKENS,
+                        system=system,
+                        tools=self.tools,
+                        messages=messages,
+                    )
+                except transient_error_types() as exc:
+                    # Red, timeout, throttling o credenciales (tras los reintentos del SDK):
+                    # resultado parcial con lo ya obtenido. Lo demás (TypeError, Ctrl-C) sube.
+                    return self._interrupted(task, messages, exc)
                 self._accumulate_usage(response)
                 usage = getattr(response, "usage", None)
                 prog.update(
@@ -317,6 +388,11 @@ class BaseAgent(ABC):
                 if response.stop_reason == "max_tokens":
                     self.last_usage["truncated"] = 1
                 result = self._extract_text(response)
+                if not result.strip():
+                    # Respuesta vacía: fallo explícito, no se memoriza como útil.
+                    self.last_usage["empty_response"] = 1
+                    self._log(task, EMPTY_RESPONSE)
+                    return EMPTY_RESPONSE
                 self._remember(task, result)
                 self._log(task, result)
                 return result
@@ -325,6 +401,31 @@ class BaseAgent(ABC):
             result = self._extract_text(response) or ITERATIONS_EXHAUSTED
             self._log(task, result)
             return result
+
+    def _interrupted(self, task: str, messages: list[dict], exc: BaseException) -> str:
+        """Texto de las vueltas completadas + línea de interrupción. Marca el usage (el costo de
+        las vueltas previas ya está acumulado) y no memoriza nada como recuerdo útil."""
+        kind = classify_transient(exc)
+        completed = max(self.iteration_count - 1, 0)
+        self.last_usage["interrupted"] = 1
+        self.last_usage["interrupted_kind"] = kind
+        partial = []
+        for m in messages:
+            if m.get("role") != "assistant":
+                continue
+            for block in m.get("content") or []:
+                text = getattr(block, "text", None) if not isinstance(block, dict) else block.get("text")
+                if text:
+                    partial.append(text)
+        line = f"{INTERRUPTED_PREFIX} {kind}, {completed} vueltas completadas."
+        if kind == "credenciales":
+            prof = getattr(self.config, "AWS_PROFILE", None) or "<perfil>"
+            line += f" Renueva con aws sso login --profile {prof}"
+        if not (getattr(self.config, "QUIET", False) or os.getenv(QUIET_ENV)):
+            stderr_console.print(f"{self.name}: {line} ({type(exc).__name__})", markup=False, highlight=False, style="yellow")
+        result = ("\n\n".join(partial).strip() + "\n\n" + line).strip()
+        self._log(task, result)
+        return result
 
     def _warn_iteration_cap(self) -> None:
         if getattr(self.config, "QUIET", False) or os.getenv(QUIET_ENV):

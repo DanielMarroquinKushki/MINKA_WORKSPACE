@@ -378,6 +378,8 @@ class Orchestrator:
                 "repeated_tool_calls",
                 "iterations_capped",
                 "truncated",
+                "interrupted",
+                "empty_response",
             ):
                 totals[key] = totals.get(key, 0) + usage.get(key, 0)
             sec = usage.get("security") or {}
@@ -421,7 +423,17 @@ class Orchestrator:
         result = self._verify_claims(result, request, agent)
         self.state.record_step(name, task, result)
         self._record_usage(agent)
-        return self._record_turn(request, [name], router.is_useful_result(result), result)
+        useful = router.is_useful_result(result) and not self._agent_failed(agent)
+        return self._record_turn(request, [name], useful, result)
+
+    def _agent_failed(self, agent) -> bool:
+        """Corrida interrumpida (parcial) o respuesta vacía: el turno no es útil y la corrida no es ok."""
+        usage = getattr(agent, "last_usage", None) or {}
+        failed = bool(usage.get("interrupted") or usage.get("empty_response"))
+        if failed:
+            self.last_run_ok = False
+            self.last_exit_code = 1
+        return failed
 
     def run(
         self,
@@ -673,6 +685,11 @@ class Orchestrator:
                 result = self._verify_claims(result, request, agent)
                 self.state.record_step(step["agent"], step["task"], result)
                 self._record_usage(agent)
+                if self._agent_failed(agent):
+                    # Parcial o vacío: no se encadenan más pasos (gastarían sobre una base rota).
+                    results.append(f"### [{step['agent']}]\n{result}" if len(plan) > 1 else result)
+                    self._save_state(task, plan, results, i + 1, fix_loop_ran)
+                    break
             # La cabecera `### [agente]` solo aporta con 2+ agentes; la memoria la quita igual.
             results.append(f"### [{step['agent']}]\n{result}" if len(plan) > 1 else result)
             self._save_state(task, plan, results, i + 1, fix_loop_ran)
@@ -680,7 +697,8 @@ class Orchestrator:
         self._clear_state()
         final = "\n\n".join(results)
         # Se guarda la salida consolidada SIN cabeceras (las quita la memoria); se muestra con ellas.
-        final = self._record_turn(request, list(self.last_plan), router.is_useful_result(result), final)
+        failed = not self.last_run_ok
+        final = self._record_turn(request, list(self.last_plan), router.is_useful_result(result) and not failed, final)
         # Plan de 2+ pasos con TTY: solo se muestra el último paso; lo demás queda en /detalle.
         if len(plan) > 1 and self.hide_investigation:
             final = self._hide_steps(final, plan, request)

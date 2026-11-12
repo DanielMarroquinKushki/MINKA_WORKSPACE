@@ -130,6 +130,22 @@ def _voice(*, completo: bool, debug: bool, plain: bool) -> str | None:
     return voice if voice in response_profile.VOICES else response_profile.VOICE_CERCANA
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        from minka._app import version_text
+
+        console.print(version_text(), markup=False, highlight=False)
+        raise typer.Exit(code=0)
+
+
+def _transient_errors() -> tuple:
+    """Errores de red, timeout, throttling y credenciales del SDK (los que base_agent convierte en
+    resultado parcial); aquí solo para el planner y otros puntos fuera del bucle del agente."""
+    from minka.core.agents.base_agent import transient_error_types
+
+    return transient_error_types()
+
+
 def _hide_investigation(*, completo: bool, debug: bool, plain: bool, json_out: bool) -> bool:
     if completo or debug or plain or json_out:
         return False
@@ -519,6 +535,10 @@ def main(
     interactive: bool = typer.Option(
         True, "--interactive/--no-interactive", help="Modo conversacional."
     ),
+    version: bool = typer.Option(
+        False, "--version", is_eager=True, callback=_version_callback,
+        help="Versión instalada, commit y revisión pedida; sale.",
+    ),
     quiet: bool = typer.Option(
         False, "--quiet", help="Omite las líneas de decisión y de tokens/costo (van a stderr)."
     ),
@@ -799,6 +819,11 @@ def main(
         except KeyboardInterrupt:
             console.print("\nSesión terminada. Hasta luego.")
             raise typer.Exit(code=130)
+        except _transient_errors() as exc:
+            from minka.core.agents.base_agent import describe_transient
+
+            console.print(describe_transient(exc), markup=False, highlight=False)
+            raise typer.Exit(code=1)
         # Markdown legible solo con TTY y sin --quiet/--json-out/--plain/bridge; si no, el
         # texto crudo sin marcado de Rich (no se come los [...]). Ver core/render.py.
         render.print_result(
@@ -856,7 +881,13 @@ def main(
                     )
                     continue
                 # El historial vive en orchestrator.memory: aquí solo viaja el pedido crudo.
-                result = orchestrator.run(user_input, use_llm_planner=not no_llm_planner)
+                try:
+                    result = orchestrator.run(user_input, use_llm_planner=not no_llm_planner)
+                except _transient_errors() as exc:
+                    from minka.core.agents.base_agent import describe_transient
+
+                    console.print(describe_transient(exc), markup=False, highlight=False)
+                    continue  # el REPL sigue vivo
                 console.print()
                 render.print_result(
                     result, console, render=render.should_render(quiet=quiet, plain=plain)
@@ -947,7 +978,8 @@ def stats(
         f"{' · '.join(f'{k} {v}' for k, v in sorted(agg['redactions'].items())) or 0}"
         f"     decisiones usadas: {agg['decisions_used']} · referencias sin respaldo: "
         f"{agg['decisions_unsupported']}     inferidas sin herramienta: {agg['claims_inferred']} · "
-        f"inconsistentes: {agg['claims_inconsistent']}[/dim]"
+        f"inconsistentes: {agg['claims_inconsistent']}     interrumpidas: {agg['interrupted']} · "
+        f"respuestas vacías: {agg['empty_responses']}[/dim]"
     )
     hashes = agg.get("prompt_hashes") or {}
     if hashes:

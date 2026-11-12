@@ -1,0 +1,157 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  UV_NO_PROGRESS: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  tests:
+    name: pytest (lock, py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python = ">=3.12": las versiones estables que lo cumplen hoy.
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked --extra dev
+      - run: uv run pytest -p no:cacheprovider -o addopts="-p no:deepeval" -q
+
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --extra dev
+      - run: uv run ruff check .
+
+  secrets:
+    name: escaneo de secretos (security.scan_text)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: scan_text sobre git ls-files
+        run: |
+          git ls-files -z > /tmp/tracked.lst
+          MINKA_HOME="$(mktemp -d)" uv run python - <<'PY'
+          import sys
+          from pathlib import Path
+          from minka.core.security import scan_text
+
+          # Fixtures con claves FALSAS; solo bajo tests/. Cualquier otro "fallo" rompe el job.
+          ALLOW_TESTS = {
+              "tests/test_backend.py",
+              "tests/test_hidden_investigation.py",
+              "tests/test_lote3_verificador.py",
+              "tests/test_knowledge_init.py",
+              "tests/test_repl_input.py",
+              "tests/test_risk_patterns.py",
+              "tests/test_security.py",
+          }
+          bad, allowed = [], 0
+          for raw in Path("/tmp/tracked.lst").read_bytes().split(b"\0"):
+              path = raw.decode()
+              if not path or path.startswith(".git/"):
+                  continue
+              try:
+                  text = Path(path).read_text(encoding="utf-8")
+              except (OSError, UnicodeDecodeError):
+                  continue
+              for hit in scan_text(text, path):
+                  if hit["level"] != "fallo":
+                      continue
+                  if path in ALLOW_TESTS and path.startswith("tests/"):
+                      allowed += 1
+                      continue
+                  bad.append(f"{path}:{hit['line']} ({hit['kind']})")
+          print(f"permitidos en tests/: {allowed} · fallos: {len(bad)}")
+          for b in bad:
+              print("  ", b)
+          sys.exit(1 if bad else 0)
+          PY
+
+  prompt-hash:
+    name: prompt_hash del motor == baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - run: |
+          expected="$(tr -d '[:space:]' < baseline/prompt_hash_motor.txt)"
+          actual="$(MINKA_HOME="$(mktemp -d)" uv run python -c 'from minka.core.baseline import compute_prompt_hash; print(compute_prompt_hash())')"
+          echo "baseline=$expected actual=$actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::prompt_hash del motor cambió; si fue a propósito, ver baseline/README.md"
+            exit 1
+          fi
+
+  build-install:
+    name: build + instalación aislada
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv build
+      - run: |
+            export UV_TOOL_DIR="$(mktemp -d)" UV_TOOL_BIN_DIR="$(mktemp -d)"
+            uv tool install --python 3.12 "$(ls dist/*.whl)"
+            "$UV_TOOL_BIN_DIR/minka" --help
+            MINKA_HOME="$(mktemp -d)" "$UV_TOOL_BIN_DIR/minka" --version
+
+  release-check:
+    name: versión del pyproject == tag y @vX en README
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)"
+          echo "pyproject: $ver"
+          if ! grep -q "@v${ver}'" README.md; then
+            msg="README no referencia @v${ver}"
+            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then echo "::error::$msg"; exit 1; fi
+            echo "::warning::$msg"
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$ver" ]; then
+              echo "::error::tag v${tag} != pyproject ${ver}"; exit 1
+            fi
+          else
+            echo "rama: la comparación tag/versión solo aplica en push de tag"
+          fi
+
+  tests-fresh-resolve:
+    name: pytest sin lock (resolución desde cero, con topes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: rm -f uv.lock
+      - run: uv sync --extra dev
+      - run: uv run pytest -p no:cacheprovider -o addopts="-p no:deepeval" -q

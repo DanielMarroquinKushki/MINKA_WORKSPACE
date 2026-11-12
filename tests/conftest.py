@@ -8,8 +8,18 @@ import tempfile
 
 from minka._app import APP_NAME, DATA_DIR_ENV
 
-# Aísla la sesión del DATA_DIR real (~/.<APP_NAME>, config_local.py, .env): debe fijarse
-# ANTES del primer import de config, que calcula DATA_DIR y carga el .env al importarse.
+# Hermeticidad: la suite no debe ver el entorno del dev. Se guarda el entorno original, se
+# borran MINKA_*, AWS_* y ANTHROPIC_API_KEY, HOME pasa a un temporal y DATA_DIR (MINKA_HOME) a otro.
+# Debe hacerse ANTES del primer import de config, que calcula DATA_DIR y carga el .env al importarse.
+# Todo se restaura en pytest_sessionfinish.
+_ORIGINAL_ENV = dict(os.environ)
+_ENV_PREFIXES = (f"{APP_NAME.upper()}_", "AWS_")
+_ENV_EXACT = ("ANTHROPIC_API_KEY",)
+for _key in list(os.environ):
+    if _key.startswith(_ENV_PREFIXES) or _key in _ENV_EXACT:
+        del os.environ[_key]
+_TEST_HOME = tempfile.mkdtemp(prefix=f"{APP_NAME}-home-")
+os.environ["HOME"] = _TEST_HOME
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix=f"{APP_NAME}-tests-")
 os.environ[DATA_DIR_ENV] = _TEST_DATA_DIR
 
@@ -131,5 +141,21 @@ def capture_panels(monkeypatch):
     return lambda cfg, new_content: run_gate(monkeypatch, cfg, new_content)
 
 
+@pytest.fixture(autouse=True)
+def _entorno_hermetico(monkeypatch):
+    """Cada test arranca sin MINKA_* (salvo el DATA_DIR de la suite), AWS_* ni ANTHROPIC_API_KEY,
+    aunque otro test o el shell del dev las hayan dejado."""
+    for key in list(os.environ):
+        if key == DATA_DIR_ENV:
+            continue
+        if key.startswith(_ENV_PREFIXES) or key in _ENV_EXACT:
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv(DATA_DIR_ENV, _TEST_DATA_DIR)
+    monkeypatch.setenv("HOME", _TEST_HOME)
+
+
 def pytest_sessionfinish(session, exitstatus):
+    os.environ.clear()
+    os.environ.update(_ORIGINAL_ENV)
     shutil.rmtree(_TEST_DATA_DIR, ignore_errors=True)
+    shutil.rmtree(_TEST_HOME, ignore_errors=True)

@@ -28,6 +28,26 @@ def _direct_url() -> dict | None:
     return json.loads(raw) if raw else None
 
 
+def version_text() -> str:
+    """`minka --version`: versión instalada, commit y revisión pedida (direct_url.json, PEP 610).
+    Sin paquete instalado o sin direct_url: lo dice (instalación editable o desde wheel local)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        ver = version(DIST_NAME)
+    except PackageNotFoundError:
+        return f"{APP_NAME} (sin paquete instalado: ejecución desde el código fuente)"
+    info = _direct_url() or {}
+    vcs = info.get("vcs_info") or {}
+    if vcs:
+        commit = str(vcs.get("commit_id", ""))[:12] or "?"
+        rev = vcs.get("requested_revision") or "sin revisión pedida (rama por defecto)"
+        return f"{APP_NAME} {ver} · commit {commit} · requested_revision: {rev}"
+    if info.get("url"):
+        return f"{APP_NAME} {ver} · instalado desde {info['url']} (sin control de versiones)"
+    return f"{APP_NAME} {ver} · instalación editable o local: sin direct_url.json"
+
+
 def install_source(configured: str = "") -> str:
     """Origen para `uv tool install`: direct_url.json > config_local > texto de ejemplo."""
     info = _direct_url()

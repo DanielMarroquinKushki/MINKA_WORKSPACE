@@ -491,7 +491,12 @@ def evaluate(
             except Exception as exc:  # noqa: BLE001 — una corrida caída no tumba el set
                 cr.runs.append(RunResult(VERDICT_NA, note=f"error: {type(exc).__name__}"))
                 continue
-            rr = score(case, output, repos)
+            from minka.core.agents.base_agent import EMPTY_RESPONSE, INTERRUPTED_PREFIX
+
+            if INTERRUPTED_PREFIX in (output or "") or (output or "").strip() == EMPTY_RESPONSE:
+                rr = RunResult(VERDICT_NA, note="corrida interrumpida o vacía: no cuenta")
+            else:
+                rr = score(case, output, repos)
             rr.cost_usd, rr.router = cost, router_name
             cr.runs.append(rr)
             spent += cost
