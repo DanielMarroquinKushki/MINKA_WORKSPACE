@@ -1696,7 +1696,7 @@ wheels = [
 
 [[package]]
 name = "minka-workspace"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic", extra = ["bedrock"] },
@@ -1737,26 +1737,26 @@ rerank = [
 [package.metadata]
 requires-dist = [
     { name = "aiobotocore", marker = "extra == 'dev'", specifier = ">=3.9.0" },
-    { name = "anthropic", extras = ["bedrock"], specifier = ">=0.120.2" },
-    { name = "boto3", specifier = ">=1.43.64" },
-    { name = "botocore", specifier = ">=1.43.81" },
+    { name = "anthropic", extras = ["bedrock"], specifier = ">=0.120.2,<3" },
+    { name = "boto3", specifier = ">=1.43.64,<2" },
+    { name = "botocore", specifier = ">=1.43.81,<2" },
     { name = "chromadb", marker = "extra == 'memory'", specifier = ">=1.5.9" },
-    { name = "chromadb", marker = "extra == 'rag'", specifier = ">=1.5.9" },
+    { name = "chromadb", marker = "extra == 'rag'", specifier = ">=1.5.9,<2" },
     { name = "deepeval", marker = "extra == 'dev'", specifier = ">=4.2.0" },
     { name = "langfuse", marker = "extra == 'obs'", specifier = ">=4.14.5" },
     { name = "mem0ai", marker = "extra == 'memory'", specifier = ">=2.0.19" },
     { name = "pathspec", specifier = ">=1.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.6.2" },
-    { name = "prompt-toolkit", specifier = ">=3.0.53" },
-    { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "prompt-toolkit", specifier = ">=3.0.53,<4" },
+    { name = "pydantic", specifier = ">=2.13.4,<3" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1.1" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "rich", specifier = ">=14.3.4" },
+    { name = "rich", specifier = ">=14.3.4,<16" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16.4" },
     { name = "sentence-transformers", marker = "extra == 'rerank'", specifier = ">=6.0.0" },
-    { name = "typer", specifier = ">=0.27.1" },
+    { name = "typer", specifier = ">=0.27.1,<1" },
 ]
 provides-extras = ["rag", "rerank", "memory", "obs", "dev"]
 
