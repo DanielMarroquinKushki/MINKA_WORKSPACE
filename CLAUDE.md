@@ -205,7 +205,7 @@ aws sso login --profile bedrock
 |-------|-------|----------------|
 | **3** (hoy) | `AUTONOMY_LEVEL=3`, `AUTO_COMMIT=False` | Toda escritura pasa por aprobación manual (gate con diff). |
 | **4** | `RAG_ENABLED=True` | Búsqueda semántica del código (ChromaDB). |
-| **5** | `EVALUATOR_ENABLED=True`, `RUN_TESTS_AFTER_CHANGE=True` | Auto-aprueba si los tests Go pasan. |
+| **5** | `EVALUATOR_ENABLED=True` | Fix-loop development → revisión → fix (tope `FIX_LOOP_MAX_USD`) y `--evaluate`. |
 | **6** | `META_AGENT_ENABLED=True`, `PROMPT_OPTIMIZATION_ENABLED=True` | El sistema mejora sus propios prompts. |
 
 ---

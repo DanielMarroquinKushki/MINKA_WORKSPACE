@@ -9,9 +9,8 @@ Corre cada agente sobre un "golden set" por proyecto
 Gate por EVALUATOR_ENABLED. El loader y la métrica determinista son puros y
 testeables sin red; los runs (agente + LLM-judge) necesitan sesión LLM.
 
-Este es un módulo NUEVO y propio: no reemplaza a agent_evaluator (Nivel 6,
-basado en logs) ni a code_evaluator (Nivel 5, calidad de código) — son features
-distintas.
+Es el único evaluador del motor: la medición determinista sobre respuestas vive en
+quality_evals.py (`minka evals quality`).
 """
 
 import json

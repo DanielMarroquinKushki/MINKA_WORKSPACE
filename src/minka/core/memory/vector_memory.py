@@ -1,7 +1,7 @@
 """
 vector_memory — memoria semántica de largo plazo con mem0 (Nivel 4+).
 
-A diferencia de session_memory (RAM, efímera) y episodic_memory (JSON, búsqueda
+A diferencia de session_memory (RAM, efímera) y del historial de la sesión (RAM, búsqueda
 por subcadena), esta destila y recupera "recuerdos" por similitud SEMÁNTICA:
 mem0 extrae hechos de las conversaciones (vía LLM) y los indexa en un vector
 store (ChromaDB, el mismo que ya usa el RAG).

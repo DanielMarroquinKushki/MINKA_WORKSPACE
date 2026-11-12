@@ -1,6 +1,6 @@
 # Estado de minka — qué es, cómo funciona y qué se ha comprobado
 
-Fecha: 2026-11-06 · versión del paquete 0.1.0 · HEAD `111132f` (tool instalado = HEAD) · suite 532 tests.
+Fecha: 2026-11-12 · versión del paquete 0.2.1 (tag `v0.2.1`, HEAD `b1c9007`) · suite 611 tests (63 archivos).
 Todo lo afirmado aquí se verifica en el código (`archivo:línea`), en los tests o en los informes de
 medición (`escaner_final.md`, `escaner_cierre.md`, `escaner_separacion.md`). Lo que no se pudo
 comprobar está marcado **no verificado**. Los ejemplos usan un "proyecto de ejemplo" con repos
@@ -114,6 +114,28 @@ coloreado y confirmación antes de escribir; `LINE_CAP` 150 líneas solo adviert
 8192, fix-loop con tope `FIX_LOOP_MAX_USD` 2.0 (`config.py:251`). No hay tope de costo por consulta
 normal: lo controla el dev con `minka stats`.
 
+**Seguridad en la capa de herramientas** (`core/security.py`, 0.2.1): `EXCLUDE_PATTERNS` (`.env*`,
+`*.pem`, `*.key`, `*.p12`, `*.jks`, `id_rsa*`, `credentials`, `secrets*`, `.aws`, `.ssh`; ampliable con
+`EXCLUDE_PATTERNS_EXTRA`) se aplica en `read_file`, `scan_directory`, `list_files`, `grep_code`,
+indexador, `semantic_search`, `show_diff` y en la guardia central `resolve_repo_paths`; cada
+resultado de tool pasa por `redact()` (claves AWS, llaves privadas, JWT, Bearer, PAN válido por Luhn →
+`[REDACTED:TIPO]`; hex, KCV y alias no se tocan) antes de ir al modelo y antes de escribir
+`agent_runs.jsonl`. Contadores `security_excluded` y `redactions` en métricas.
+
+**Voz y decisiones** (0.2.1): `VOICE` cercana|directa en el mensaje user para breve, exploratorio,
+decisión y reporte (`--completo`, `--debug`, `--plain` la apagan; `core/orchestrator/response_profile.py`).
+Historial de decisiones (`knowledge/team/decisions_log.md`, entradas `## ADR-nnn — título` con
+`**Fecha:**` y `**Estado:**`) y alcance del ticket como bloque user determinista a $0 (hasta
+`CONTEXT_DECISIONS_MAX` entradas por términos, tope `CONTEXT_DECISIONS_MAX_TOKENS`;
+`core/memory/decisions.py`); una decisión reemplazada se marca y no se usa como base.
+
+**Verificador de afirmaciones** (`core/orchestrator/claim_check.py`): identificadores en backticks,
+bloques de código y cifras contra pedido + pasos previos + repos (`git grep`) + knowledge ("(doc)");
+referencias `ADR-nnn` contra el historial; nombres de herramientas excluidos y "inferido sin
+herramienta" si no se ejecutó; cadenas con placeholders → "depende de runtime"; misma cita con
+valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con la corrida anterior"
+(`ConsistencyMemory`, solo RAM).
+
 ## 4. Comandos y flags
 
 | Comando / flag | Qué hace |
@@ -141,6 +163,8 @@ normal: lo controla el dev con `minka stats`.
 | `minka evals routing [--runs 1-5] [--json-out]` | mide el planner con 53 casos (`core/evals/routing_cases.json`); cuesta tokens |
 | `minka knowledge check [--project]` | citas del knowledge contra REPOS; exit 1 si hay rotas |
 | `minka knowledge init [--project] [--apply] [--yes]` | borrador determinista de knowledge; `--apply` nunca sobrescribe |
+| `minka knowledge scan [--project]` | secretos en `knowledge/` (ruta:línea y tipo, nunca el valor); `TEST_VALUES` y marcas `<!-- ejemplo -->` cuentan aparte; exit 1 con fallos |
+| `minka evals quality [--project] [--runs 1-5] [--max-usd] [--json-out] [--refresh <id>] [--draft] [--template]` | golden set con verificación determinista (existence, location, count, absence, consistency con anchor), sin juez LLM; tope de gasto proyectado con medianas reales; `MINKA_SOURCE=eval_quality` fuera de `stats` |
 
 ## 5. Configuración y datos
 
@@ -182,6 +206,10 @@ normal: lo controla el dev con `minka stats`.
 | Pegado multilínea en el REPL | `tests/test_repl_input.py` (11 tests, bracketed paste simulado) | tests |
 | Investigación oculta y /detalle | `tests/test_hidden_investigation.py` | tests |
 | Bridge solo lectura | corrida forced $0.352 visible en `stats --source bridge` (escaner_final B6) | 1 |
+| Exclusión y redacción en todas las tools de lectura | `tests/test_security.py` (18 tests, repo temporal con los 13 tipos excluidos; cliente falso que obedece un comentario de inyección y la tool lo bloquea) | tests |
+| Voz, decisiones y referencias ADR | `tests/test_voice_decisions.py` (17), medición directa vs cercana: 15 líneas, $0.50 / $0.21 (`stats --source voice_before/voice_after`) | tests · n=2 |
+| Verificador: tools, inferido, runtime, inconsistencia | `tests/test_lote3_verificador.py` (16) | tests |
+| Evals quality (golden set determinista) | `tests/test_quality_evals.py` (28); línea base `quality_v3`: 20 casos, 18 evaluables, 18 aciertos, 2 no evaluables, 0 inestables, `--runs 3`, $7.92 de $12 | medido n=3 |
 
 ## 7. Limitaciones
 
@@ -245,13 +273,16 @@ normal: lo controla el dev con `minka stats`.
 - **Nunca se lee** en `knowledge init`: `.env*`, `*.pem`, `*.key`, `*.p12`, `*.jks`, `id_rsa*`,
   `credentials`, `secrets*`, `.aws/`, `vendor/`, `node_modules/`, `.venv/`, `dist/`, `build/`
   (`extractor.py:37-42`); escaneo de 7 patrones de secretos que aborta listando `ruta:línea` sin el
-  valor (`extractor.py:45-53`). Las tools de lectura de los agentes **no** tienen esa exclusión:
-  **no verificado** que `read_file` rechace un `.env`.
+  valor (`extractor.py:45-53`). Desde 0.2.1 las tools de lectura de los agentes aplican la misma
+  política (`core/security.py`, `tests/test_security.py`): `read_file` devuelve "excluido por política
+  de seguridad" sin contenido, y los secretos de alta confianza que sí entran por un archivo
+  permitido llegan redactados al modelo.
 - **ApprovalGate**: ninguna escritura sin confirmación (nivel 3 por defecto, `config.py:126`).
   **Bridge**: `--read-only` y `MINKA_SOURCE=bridge` rechazan agentes que escriben (`orchestrator.py:528-532`).
 - **Queda en disco**: métricas sin tarea ni respuesta (`tests/test_run_metrics.py` lo exige);
-  `agent_runs.jsonl` sí guarda la tarea y 500 caracteres del resultado (`base_agent.py:521-523`), y
-  `per_iteration[].tools` guarda nombre y rutas/rangos/patrones de cada tool, nunca su contenido.
+  `agent_runs.jsonl` guarda la tarea y 500 caracteres del resultado ya redactados, y
+  `per_iteration[].tools` guarda nombre y rutas/rangos/patrones de cada tool, nunca su contenido;
+  `cwd` se guarda como `~/…` y el `reasoning` del planner pasa por la redacción.
   Nada de la investigación oculta ni del historial se escribe.
 - **Riesgos conocidos**: todo lo que esté en knowledge o contexto vivo viaja al modelo; `detect_risks`
   busca PAN en logs, llaves embebidas y `eval`/`exec` (`core/tools/analysis/risk_analyzer.py:17-72`)
@@ -281,20 +312,29 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
   salidas cortadas y `prompt_hash`. Hoy: 677 citas verificadas y 17 no encontradas; 16 afirmaciones
   sin respaldo de 193.
 - `minka evals routing --runs 3`: 53 casos, mide empty_plan, acuerdo y estabilidad (cuesta ~$0.19).
-- `minka knowledge check --project P`: citas del knowledge; hoy 296 citas, 221 ok, 8 inexistentes
-  (intencionales), 45 ambiguas, 10 símbolo movido, 11 símbolo ausente, 1 elidida.
+- `minka knowledge check --project P`: citas del knowledge; hoy 292 citas, 216 ok, 9 inexistentes.
+- `minka knowledge scan --project P`: secretos en knowledge; en el proyecto en uso 0 fallos, 9 a
+  revisar y 7 ejemplos por lista (valores de prueba de los manuales).
+- `minka evals quality --project P --runs 3`: línea base **quality_v3** (2026-11-11): 20 casos
+  (3 legacy, 4 existence, 1 location, 5 absence, 4 count, 3 consistency), 18 evaluables, 18 aciertos,
+  2 no evaluables, 0 caducados, 0 inestables, $7.92 de $12. Límites: n=3 corridas; el set se ajustó
+  entre la base (22 casos, 70,6 %) y v2/v3 (20 casos: se retiraron 2 existence); los `cons-*`
+  usan anchor y los 12 casos añadidos el 11-nov están "sin revisar". Guarda de regresión: una
+  corrida con tasa < 1,0 sobre los 18 evaluables, cualquier caducado sin revisar o inestable > 0
+  obliga a revisar antes de cambiar prompts o tools.
 - **Línea base**: `prompt_hash` = sha256 de prompts + schemas de tools + modelos
   (`core/baseline.py:32-41`). Igual hash ⇔ misma línea base; todos los cambios de los últimos ciclos
   la dejaron en el mismo valor (escaner_cierre, 59 corridas del mes lo llevan).
-- Suite: `uv run pytest` → 532 tests (59 archivos); `ruff check` limpio.
+- Suite: `uv run pytest` → 611 tests (63 archivos); `ruff check` limpio.
 
 ## 11. Pendientes y decisiones abiertas
 
-- Tag de versión nuevo (solo existe `v0.1.0`; HEAD va 6 commits por delante).
-- Retiro del motor viejo del workspace (1.6 GB de `.venv`, `core/`, tests) tras el desacople del bridge
-  (escaner_separacion).
-- Hardening: exclusión de archivos sensibles también en `read_file`/`grep_code`; `agent_runs.jsonl`
-  guarda la tarea en claro.
+- Hechos en 0.2.1 (lote 4): tag `v0.2.1`; motor viejo del workspace retirado (1,6 GB de `.venv`,
+  `core/`, tests, docs; respaldo en tar); stubs y módulos sin importadores retirados
+  (`code_evaluator`, `agent_evaluator`, `embedder`, `episodic_memory`, `persistent_memory`);
+  `RUN_TESTS_AFTER_CHANGE` y `GO_TEST_TIMEOUT*` fuera del config (ningún código los leía).
+- Pendiente: decidir sobre `report_agent`, `test_runner` y `SessionMemory` con los 5 casos tipo
+  reporte del set de oro (medición antes/después con tope).
 - `fuente_desactualizada` en `knowledge check` y soporte node en `knowledge init` (diseño ciclo 5).
 - Formato de ruff pendiente en 62 archivos (`ruff format --check`).
 - Ideas anotadas sin abrir: `minka trace` (traza local por corrida, apagada por defecto), skills por
@@ -330,6 +370,9 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
 | Onboarding con repo ajeno en minutos | escaner_cierre B (28 s, 11 pasos) | medido n=1 |
 | Soporte real de node | perfil en `stacks.py:105-110`; sin RAG ni knowledge init; sin medición | no verificado |
 | Más de un usuario | — | no verificado |
-| `read_file` excluye archivos sensibles | — | no verificado (no hay exclusión en las tools) |
+| `read_file` excluye archivos sensibles | `core/security.py`, `tests/test_security.py` | verificado |
+| Secretos redactados antes del modelo y del disco | `security.redact`, `tests/test_security.py` | verificado |
+| Decisiones y alcance como contexto a $0 | `core/memory/decisions.py`, `tests/test_voice_decisions.py` | verificado |
+| Golden set determinista reproducible | `quality_v3` (18/18, n=3, $7.92) | medido n=3 |
 | Reportes con relleno antes del perfil `decision` | `stats --source report_before` ($2.67, 6 corridas) | observado · líneas no reproducibles |
 | "id inconsistente entre corridas" | — | no verificado |

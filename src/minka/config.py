@@ -273,9 +273,6 @@ PROMPT_REGISTRY_ENABLED = os.getenv("PROMPT_REGISTRY_ENABLED", "").strip().lower
 EVALUATOR_ENABLED = False
 # Tope de costo de una corrida con fix-loop (tarifa de lista, core/pricing.py). 0 = sin tope.
 FIX_LOOP_MAX_USD = float(os.getenv("FIX_LOOP_MAX_USD", "2.0"))
-RUN_TESTS_AFTER_CHANGE = False
-GO_TEST_TIMEOUT = "30s"  # legacy (formato flag de Go); usar GO_TEST_TIMEOUT_SECONDS
-GO_TEST_TIMEOUT_SECONDS = int(os.getenv("GO_TEST_TIMEOUT_SECONDS", "60"))
 
 # ---------------------------------------------------------------------------
 # Meta-agente — Nivel 6 (stub por ahora)
