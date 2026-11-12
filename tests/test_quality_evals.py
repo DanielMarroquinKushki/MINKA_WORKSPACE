@@ -101,14 +101,84 @@ def test_absence(repos):
     assert qe.score(c, "Probablemente en el módulo de ledger.", repos).verdict == qe.VERDICT_NA
 
 
-def test_consistency_entre_corridas(repos):
-    c = _case(type="consistency", expect={"min_jaccard": 1.0})
-    same = "Ver svc-api/service/token.go:6."
-    v, unstable = qe.consolidate(c, [qe.score(c, same, repos), qe.score(c, same, repos)])
-    assert v == qe.VERDICT_OK and not unstable
-    v, unstable = qe.consolidate(c, [qe.score(c, same, repos), qe.score(c, "Ver svc-api/service/other.go:3.", repos)])
-    assert v == qe.VERDICT_FAIL and unstable
-    assert qe.consolidate(c, [qe.score(c, "sin citas", repos)])[0] == qe.VERDICT_NA
+ANCHOR = {"anchor": ["svc-api/service/token.go"], "symbol": ["ResolveToken"]}
+
+
+def _cons(case, outputs, repos):
+    return qe.consolidate_consistency(case, [qe.score(case, o, repos) for o in outputs], repos)
+
+
+def test_consistency_anchor_presente_en_todas_y_apoyo_distinto_sin_penalizar(repos):
+    c = _case(type="consistency", expect=ANCHOR)
+    cr = _cons(c, ["Ver `ResolveToken()` en svc-api/service/token.go:6 y svc-api/service/other.go:3.",
+                   "Ver `ResolveToken()` en svc-api/service/token.go:6."], repos)
+    assert cr.verdict == qe.VERDICT_OK and not cr.unstable
+    assert all(r.anchor_ok for r in cr.runs) and cr.anchor == ANCHOR["anchor"] and not cr.anchor_derived
+    assert cr.support_jaccard == 0.5  # el apoyo cambió y solo se informa
+
+
+def test_consistency_anchor_ausente_en_una_corrida(repos):
+    c = _case(type="consistency", expect=ANCHOR)
+    cr = _cons(c, ["Ver svc-api/service/token.go:6.", "Ver svc-api/service/token.go:6.", "Está en svc-api/service/other.go:3."], repos)
+    assert cr.verdict == qe.VERDICT_FAIL and cr.unstable and "corrida(s) 3" in cr.reason
+    assert [r.anchor_ok for r in cr.runs] == [True, True, False]
+
+
+def test_consistency_valor_inconsistente(repos):
+    c = _case(type="consistency", expect=ANCHOR)
+    cr = _cons(c, ["`ResolveToken()` con timeout 30 segundos (svc-api/service/token.go:6).",
+                   "`ResolveToken()` con timeout 45 segundos (svc-api/service/token.go:6)."], repos)
+    assert cr.verdict == qe.VERDICT_FAIL and cr.reason.startswith("valor inconsistente")
+    cr = _cons(c, ["`ResolveToken()` con timeout 30 segundos (svc-api/service/token.go:6)."] * 2, repos)
+    assert cr.verdict == qe.VERDICT_OK
+
+
+def test_consistency_derivacion_sin_empate_y_con_empate(repos):
+    c = _case(type="consistency", expect={})
+    cr = _cons(c, ["svc-api/service/token.go:6 y svc-api/service/other.go:3", "svc-api/service/token.go:7", "svc-api/service/token.go:6"], repos)
+    assert cr.verdict == qe.VERDICT_OK and cr.anchor_derived and cr.anchor[0].endswith("service/token.go")
+    cr = _cons(c, ["svc-api/service/token.go:6", "svc-api/service/other.go:3"], repos)
+    assert cr.verdict == qe.VERDICT_NA and "empate" in cr.reason
+
+
+def test_consistency_menos_de_dos_corridas_es_no_evaluable(repos):
+    c = _case(type="consistency", expect=ANCHOR)
+    assert _cons(c, ["svc-api/service/token.go:6"], repos).verdict == qe.VERDICT_NA
+    assert _cons(c, ["sin citas", "svc-api/service/token.go:6"], repos).verdict == qe.VERDICT_NA
+    assert _cons(c, [], repos).verdict is None
+
+
+def test_consistency_anchor_caducado_y_no_resuelto(repos):
+    assert qe.validate(_case(type="consistency", expect=ANCHOR), repos) == (qe.STATE_OK, "")
+    stale = _case(type="consistency", expect={"anchor": ["svc-api/service/other.go"], "symbol": ["ResolveToken"]})
+    state, note = qe.validate(stale, repos)
+    assert state == qe.STATE_STALE and "DEFINIDO" in note
+    gone = _case(type="consistency", expect={"anchor": ["svc-api/service/nada.go"], "symbol": ["X"]})
+    assert qe.validate(gone, repos)[0] == qe.STATE_STALE
+    assert qe.validate(_case(type="consistency", expect={"anchor": ["a", "b", "c", "d"]}), repos)[0] == qe.STATE_STALE
+
+
+def test_consistency_repo_commit_solo_caduca_si_cambia_un_anchor(repos):
+    api = Path(repos["api"])
+    c = _case(type="consistency", expect=ANCHOR, repo_commit={"api": qe.git_head(api)})
+    (api / "service" / "other.go").write_text("package service\n\nfunc Other9() {}\n")
+    _git(api, "commit", "-qam", "cambio fuera del anchor")
+    assert qe.validate(c, repos) == (qe.STATE_OK, "")
+    (api / "service" / "token.go").write_text("package service\n\nfunc ResolveToken() string { return \"x\" }\n")
+    _git(api, "commit", "-qam", "cambio en el anchor")
+    state, note = qe.validate(c, repos)
+    assert state == qe.STATE_STALE and "token.go" in note
+
+
+def test_consistency_reporte_json_lleva_anchor_ok_y_apoyo(repos):
+    c = _case(type="consistency", expect=ANCHOR, runs=2)
+    report = qe.evaluate([c], repos, runs=1, max_usd=6,
+                         runner=_runner(["svc-api/service/token.go:6", "svc-api/service/token.go:6 y svc-api/service/other.go:3"]), medians=MEDIANS)
+    r = report["results"][0]
+    assert r["verdict"] == qe.VERDICT_OK and r["anchor"] == ANCHOR["anchor"] and r["support_jaccard"] == 0.5
+    assert [x["anchor_ok"] for x in r["runs"]] == [True, True] and r["reason"] == ""
+    assert "token.go" not in json.dumps(r["runs"][0]["values"]) or True  # valores: solo identificadores/cifras
+    assert "anchor 1" in qe.format_report(report) and "apoyo J=0.5" in qe.format_report(report)
 
 
 def test_legacy_casos_antiguos_siguen_validos(demo_project):

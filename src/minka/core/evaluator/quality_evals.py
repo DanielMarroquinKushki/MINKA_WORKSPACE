@@ -54,7 +54,10 @@ class RunResult:
     cost_usd: float = 0.0
     router: str | None = None
     note: str = ""
-    cited_files: list[str] = field(default_factory=list)
+    cited_files: list[str] = field(default_factory=list)  # relativos al repo (informativo)
+    cited_real: list[str] = field(default_factory=list)  # rutas reales, para comparar con los anchor
+    anchor_ok: bool | None = None  # consistency: ¿la corrida citó todos los anchor?
+    values: dict[str, list[str]] = field(default_factory=dict)  # cita → identificadores/cifras de esa línea
 
 
 @dataclass
@@ -66,6 +69,10 @@ class CaseResult:
     runs: list[RunResult] = field(default_factory=list)
     unstable: bool = False
     note: str = ""
+    anchor: list[str] = field(default_factory=list)  # consistency: declarados o derivados
+    anchor_derived: bool = False
+    support_jaccard: float | None = None  # archivos de apoyo entre corridas: informativo, no puntúa
+    reason: str = ""  # motivo del fallo / no evaluable
 
 
 # -- git grep ---------------------------------------------------------------------------------------
@@ -143,12 +150,29 @@ def validate(case: EvalCase, repos: dict) -> tuple[str, str]:
                 return STATE_STALE, f"repo {alias} no está en REPOS"
             head = git_head(root)
             if head and commit and not head.startswith(commit[: len(head)]) and not commit.startswith(head):
-                paths = [_repo_relative(exp["file"], alias, root)] if exp.get("file") else []
+                # Pathspec acotado a lo que el caso espera: su archivo (location) o sus anchor
+                # (consistency). Sin ninguno, cualquier cambio del repo lo caduca.
+                wanted = [exp["file"]] if exp.get("file") else list(exp.get("anchor") or [])
+                paths = [_repo_relative(w, alias, root) for w in wanted]
                 changed, why = changed_files(root, commit, paths or ["."])
                 if changed is None:
                     return STATE_STALE, f"{alias}: {why}"
                 if changed:
                     return STATE_STALE, f"{alias}: HEAD {head} ≠ {commit}; cambió {', '.join(changed[:3])}"
+    if case.type == "consistency" and exp.get("anchor"):
+        anchors = list(exp["anchor"])
+        if not 1 <= len(anchors) <= 3:
+            return STATE_STALE, "anchor debe tener de 1 a 3 archivos"
+        symbols = exp.get("symbol") or []
+        symbols = [symbols] if isinstance(symbols, str) else list(symbols)
+        resolved = _resolve_anchors(anchors, roots)
+        for a, real in resolved.items():
+            if real is None:
+                return STATE_STALE, f"anchor no existe en el repo vivo: {a}"
+            if symbols:
+                text = Path(real).read_text(encoding="utf-8", errors="ignore")
+                if not any(symbol_defined(text, sym) for sym in symbols):
+                    return STATE_STALE, f"ningún símbolo esperado está DEFINIDO en el anchor {a}"
     if case.type == "location":
         if not exp.get("file") or not exp.get("symbol"):
             return STATE_STALE, "location exige expect.file y expect.symbol"
@@ -274,20 +298,98 @@ def score(case: EvalCase, output: str, repos: dict) -> RunResult:
     if case.type == "consistency":
         if not cited:
             return RunResult(VERDICT_NA, note="sin citas", cited_files=files)
-        return RunResult(VERDICT_OK, note="se decide entre corridas", cited_files=files)
+        from minka.core.orchestrator.claim_check import ConsistencyMemory
+
+        values = {k: sorted(v) for k, v in ConsistencyMemory.values_by_citation(output.split("\n")).items()}
+        return RunResult(VERDICT_OK, note="se decide entre corridas", cited_files=files,
+                         cited_real=sorted(cited), values=values)
     return RunResult(VERDICT_NA, note=f"type desconocido {case.type}")
 
 
-def consolidate(case: EvalCase, runs: list[RunResult]) -> tuple[str | None, bool]:
-    """(veredicto mediana, inestable). consistency compara los archivos citados entre corridas."""
+def _resolve_anchors(anchors: list[str], roots: dict[str, Path]) -> dict[str, str | None]:
+    """Anchor declarado → ruta real (None si no se resuelve en los repos vivos)."""
+    index = cit.RepoIndex({a: str(r) for a, r in roots.items()})
+    out: dict[str, str | None] = {}
+    for a in anchors:
+        status, matches = index.resolve(a)
+        out[a] = str(matches[0][1]) if status == cit.STATUS_OK and matches else None
+    return out
+
+
+def derive_anchor(runs: list[RunResult]) -> tuple[list[str], str]:
+    """Anchor derivado: el archivo citado en más corridas, si es único y aparece en más de la mitad."""
+    from collections import Counter
+
+    counts: Counter = Counter(f for r in runs for f in set(r.cited_real))
+    if not counts:
+        return [], "sin archivos citados"
+    top = max(counts.values())
+    candidates = sorted(f for f, c in counts.items() if c == top)
+    if len(candidates) != 1:
+        return [], f"empate en la derivación del anchor ({len(candidates)} archivos citados en {top} corridas)"
+    if top * 2 <= len(runs):
+        return [], f"el archivo más citado aparece en {top} de {len(runs)} corridas: sin mayoría"
+    return candidates, ""
+
+
+def _mean_jaccard(sets: list[frozenset]) -> float | None:
+    pairs = [(a, b) for i, a in enumerate(sets) for b in sets[i + 1:]]
+    if not pairs:
+        return None
+    return round(sum((len(a & b) / len(a | b)) if a | b else 1.0 for a, b in pairs) / len(pairs), 3)
+
+
+def consolidate_consistency(case: EvalCase, runs: list[RunResult], repos: dict) -> CaseResult:
+    """Acierta si TODAS las corridas efectivas citan todos los anchor y ninguna cita repite valores
+    distintos. Los archivos de apoyo solo se reportan (Jaccard medio)."""
+    cr = CaseResult(case.id, case.type, runs=runs)
+    effective = [r for r in runs if r.verdict != VERDICT_NA and r.cited_real]
+    cr.support_jaccard = _mean_jaccard([frozenset(r.cited_real) for r in effective])
+    if len(effective) < 2:
+        cr.verdict, cr.reason = (VERDICT_NA if runs else None), "menos de 2 corridas efectivas"
+        return cr
+    roots = _roots(repos)
+    declared = list((case.expect or {}).get("anchor") or [])
+    if declared:
+        resolved = _resolve_anchors(declared, roots)
+        missing = [a for a, real in resolved.items() if real is None]
+        if missing:
+            cr.verdict, cr.reason = VERDICT_NA, f"anchor no resuelve en los repos: {', '.join(missing)}"
+            return cr
+        cr.anchor = declared
+        targets = [real for real in resolved.values() if real]
+    else:
+        derived, why = derive_anchor(effective)
+        if not derived:
+            cr.verdict, cr.reason = VERDICT_NA, why
+            return cr
+        cr.anchor, cr.anchor_derived, targets = derived, True, derived
+    for r in effective:
+        r.anchor_ok = all(t in r.cited_real for t in targets)
+    failed = [i + 1 for i, r in enumerate(effective) if not r.anchor_ok]
+    if failed:
+        cr.verdict, cr.unstable = VERDICT_FAIL, True
+        cr.reason = f"anchor ausente en corrida(s) {', '.join(map(str, failed))}"
+        return cr
+    seen: dict[str, list[str]] = {}
+    for r in effective:
+        for cite, vals in r.values.items():
+            if not vals:
+                continue
+            if cite in seen and seen[cite] != vals:
+                cr.verdict, cr.unstable = VERDICT_FAIL, True
+                cr.reason = f"valor inconsistente en {cite}"
+                return cr
+            seen.setdefault(cite, vals)
+    cr.verdict = VERDICT_OK
+    return cr
+
+
+def consolidate(case: EvalCase, runs: list[RunResult], repos: dict | None = None) -> tuple[str | None, bool]:
+    """(veredicto mediana, inestable). Para consistency usa consolidate_consistency."""
     if case.type == "consistency":
-        sets = [frozenset(r.cited_files) for r in runs if r.verdict != VERDICT_NA]
-        if len(sets) < 2:
-            return (VERDICT_NA if runs else None), False
-        min_j = float((case.expect or {}).get("min_jaccard", 1.0))
-        base = sets[0]
-        ok = all((len(base & s) / len(base | s) if base | s else 1.0) >= min_j for s in sets[1:])
-        return (VERDICT_OK if ok else VERDICT_FAIL), not ok
+        cr = consolidate_consistency(case, runs, repos or {})
+        return cr.verdict, cr.unstable
     evaluable = [r.verdict for r in runs if r.verdict != VERDICT_NA]
     if not evaluable:
         return (VERDICT_NA if runs else None), False
@@ -396,7 +498,12 @@ def evaluate(
             if spent > max_usd:
                 stopped = f"tope ${max_usd:.2f} superado: gastado ${spent:.2f}"
                 break
-        cr.verdict, cr.unstable = consolidate(case, cr.runs)
+        if case.type == "consistency":
+            cc_ = consolidate_consistency(case, cr.runs, repos)
+            cr.verdict, cr.unstable, cr.anchor, cr.anchor_derived = cc_.verdict, cc_.unstable, cc_.anchor, cc_.anchor_derived
+            cr.support_jaccard, cr.reason = cc_.support_jaccard, cc_.reason
+        else:
+            cr.verdict, cr.unstable = consolidate(case, cr.runs)
         results.append(cr)
         if stopped:
             continue
@@ -434,6 +541,13 @@ def format_report(report: dict) -> str:
     for r in report["results"]:
         tag = r["verdict"] or r["state"]
         extra = f" · {r['note']}" if r.get("note") else ""
+        if r.get("reason"):
+            extra += f" · {r['reason']}"
+        if r.get("anchor"):
+            oks = [x.get("anchor_ok") for x in r.get("runs", []) if x.get("anchor_ok") is not None]
+            extra += f" · anchor{' derivado' if r.get('anchor_derived') else ''} {len(r['anchor'])} · corridas con anchor {sum(1 for o in oks if o)}/{len(oks)}"
+            if r.get("support_jaccard") is not None:
+                extra += f" · apoyo J={r['support_jaccard']}"
         lines.append(f"  {r['id']:<28} {r['type']:<12} {tag}{' (inestable)' if r['unstable'] else ''}{extra}")
     return "\n".join(lines)
 
