@@ -13,7 +13,7 @@ Escalable por niveles de autonomía (3 → 6) mediante flags de configuración.
 ```bash
 # Instala una versión etiquetada (recomendado): el lock del repo NO se aplica en `uv tool install`
 # desde git, así que el tag es la única forma de fijar qué código corre.
-uv tool install 'minka-workspace @ git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE@v0.2.1'
+uv tool install 'minka-workspace @ git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE@v0.2.2'
 # Última versión de main (puede traer dependencias más nuevas):
 uv tool install git+https://github.com/DanielMarroquinKushki/MINKA_WORKSPACE
 ```

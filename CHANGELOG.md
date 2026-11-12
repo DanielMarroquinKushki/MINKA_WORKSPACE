@@ -1,6 +1,6 @@
 # Cambios
 
-## Sin publicar — lote 6 (operación)
+## 0.2.2 — lote 6 (operación)
 
 Nada mueve la línea base de prompts (`prompt_hash`).
 
