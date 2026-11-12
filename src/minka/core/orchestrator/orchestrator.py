@@ -20,7 +20,7 @@ from rich.panel import Panel
 
 from minka._app import QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
-from minka.core import metrics, render, security
+from minka.core import metrics, render, retention, security, trace_log
 from minka.core.memory.conversation_memory import ConversationMemory
 from minka.core.memory.live_context import load_live_context, wants_live_context
 from minka.core.orchestrator import (
@@ -65,6 +65,7 @@ class Orchestrator:
         # quien crea el orquestador (main.py: repl|cli); SOURCE_ENV lo pisa.
         self.source: str = "cli"
         self.last_run_id: str | None = None
+        self.trace: trace_log.RunTrace | None = None
         self.last_router: str | None = None
         self.last_plan: list[str] = []
         self.fix_loop_iters: int = 0
@@ -404,6 +405,7 @@ class Orchestrator:
         except KeyError:
             self.last_run_ok = False
             return f"Agente desconocido: {forced_agent}"
+        agent.trace = self.trace
 
         self._apply_decision(
             router.RouteDecision("forced", "override --agent", [name], confidence="alta")
@@ -445,6 +447,8 @@ class Orchestrator:
         self.last_run_ok = True
         self.last_usage = {"per_agent": [], "totals": {}}
         self.last_run_id = uuid.uuid4().hex
+        self._rotate_agent_log_once()
+        self.trace = trace_log.open_run(config, self.last_run_id, announce=self._announce)
         self.last_router = None
         self.last_reason = None
         self.last_confidence = None
@@ -468,6 +472,35 @@ class Orchestrator:
             raise
         finally:
             self.last_run_record = self._close_run_record(started)
+            if self.trace is not None:
+                totals = self.last_usage.get("totals") or {}
+                self.trace.event(
+                    "end",
+                    ok=self.last_run_ok,
+                    response_lines=self.last_response_lines,
+                    interrupted=int(totals.get("interrupted") or 0),
+                    empty_response=int(totals.get("empty_response") or 0),
+                    duration_ms=int((perf_counter() - started) * 1000),
+                )
+
+    _agent_log_rotated = False
+
+    def _rotate_agent_log_once(self) -> None:
+        """Rotación de output/logs/agent_runs.jsonl una vez por proceso, con aviso."""
+        if Orchestrator._agent_log_rotated:
+            return
+        Orchestrator._agent_log_rotated = True
+        try:
+            removed = retention.rotate_agent_runs(config)
+        except Exception:  # noqa: BLE001 — la retención nunca bloquea una corrida
+            return
+        if removed:
+            self._announce(retention.rotation_notice(removed, config))
+
+    def _announce(self, line: str) -> None:
+        if self.quiet or os.getenv(QUIET_ENV):
+            return
+        self._stderr.print(render.dim_line(line))
 
     def _close_run_record(self, started: float) -> dict:
         """Registro de la corrida: números y nombres, nunca la tarea ni el resultado.
@@ -510,6 +543,18 @@ class Orchestrator:
         self.last_router = decision.router
         self.last_reason = decision.reason
         self.last_confidence = decision.confidence
+        if self.trace is not None:
+            self.trace.event(
+                "route",
+                router=decision.router,
+                reason=decision.reason,
+                confidence=decision.confidence,
+                agents=list(decision.agents),
+                evaluated=list(decision.evaluated),
+                notices=list(decision.notices),
+                planner_error=(decision.planner_error or {}).get("kind") if decision.planner_error else None,
+                planner_retries=decision.retries,
+            )
         if self.quiet or os.getenv(QUIET_ENV):
             return
         self._stderr.print(
@@ -670,6 +715,7 @@ class Orchestrator:
                 agent.live_context_block = self._live_block()
                 agent.decisions_block = self._decisions_block(request)
                 agent.voice = self.voice
+                agent.trace = self.trace
                 # Perfil por tipo de pedido: info_direct → breve; planner con plan de solo
                 # architecture → exploratorio; lo demás completo. "en detalle"/"completo"
                 # en el pedido, --completo y --debug fuerzan el completo.

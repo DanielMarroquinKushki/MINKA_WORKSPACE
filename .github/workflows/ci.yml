@@ -121,6 +121,10 @@ jobs:
             uv tool install --python 3.12 "$(ls dist/*.whl)"
             "$UV_TOOL_BIN_DIR/minka" --help
             MINKA_HOME="$(mktemp -d)" "$UV_TOOL_BIN_DIR/minka" --version
+      - name: release.sh --dry-run (verificaciones y build; sin tag, sin instalación, sin remoto)
+        run: |
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)"
+          RELEASE_SKIP_GH=1 bash scripts/release.sh "v${ver}" --dry-run
 
   release-check:
     name: versión del pyproject == tag y @vX en README

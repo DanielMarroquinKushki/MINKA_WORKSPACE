@@ -112,6 +112,13 @@ class RouteDecision:
     retries: int = 0
     # Texto que el orquestador añade a la tarea del agente (p.ej. qué repos revisar).
     task_suffix: str | None = None
+    # Reglas locales (capas 1 y 4) evaluadas y descartadas antes de esta decisión; solo informa
+    # (`minka trace`), no cambia el routing.
+    evaluated: list[str] = field(default_factory=list)
+
+
+# Orden de las reglas locales de `local_decision`; si ninguna aplica, el pedido va al planner.
+LOCAL_RULES = ("small_talk", "state", "meta", "review", "followup_change", "ambiguous", "info_direct")
 
 
 ASK_AMBIGUOUS = (
@@ -351,21 +358,27 @@ def local_decision(
     repos: dict | None = None,
 ) -> RouteDecision | None:
     """Capas 1 y 4. None si el pedido debe ir al planner."""
+    tried: list[str] = []
     reply = small_talk_reply(request, agent_names)
     if reply:
-        return RouteDecision("small_talk", "saludo", reply=reply, confidence="alta")
+        return RouteDecision("small_talk", "saludo", reply=reply, confidence="alta", evaluated=tried)
+    tried.append("small_talk")
     reply = state_reply(request, session_turns)
     if reply:
-        return RouteDecision("state", "estado de la sesión", reply=reply, confidence="alta")
+        return RouteDecision("state", "estado de la sesión", reply=reply, confidence="alta", evaluated=tried)
+    tried.append("state")
     reply = meta_reply(request, agent_names)
     if reply:
-        return RouteDecision("meta", f"meta sobre {APP_NAME}", reply=reply, confidence="alta")
+        return RouteDecision("meta", f"meta sobre {APP_NAME}", reply=reply, confidence="alta", evaluated=tried)
+    tried.append("meta")
     # (b) revisión sin rama/commit citados: git decide antes del planner ($0 si todo limpio,
     # pr_review limitado a los repos con cambios si los hay).
     if has_diff_reference(request):
         decision = review_decision(request, repos)
         if decision is not None:
+            decision.evaluated = list(tried)
             return decision
+    tried.append("review")
     # "arregla eso" tras una consulta útil con citas: el código citado en el turno previo es
     # la referencia; development lo recibe como historial.
     last = session_turns[-1] if session_turns else None
@@ -382,11 +395,14 @@ def local_decision(
             "cambio sobre el resultado previo, directo",
             agents=["development_agent"],
             confidence="alta",
+            evaluated=tried,
         )
+    tried.append("followup_change")
     if is_ambiguous(request, repos):
         return _fallback_decision(
-            session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS
+            session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS, evaluated=tried
         )
+    tried.append("ambiguous")
     # Pregunta de información simple → architecture directo, sin planner (PLANNER_SKIP_INFO).
     # Un pedido de reporte va al planner aunque traiga palabras de información.
     if (
@@ -399,6 +415,7 @@ def local_decision(
             "consulta de información, directo",
             agents=["architecture_agent"],
             confidence="alta",
+            evaluated=tried,
         )
     return None
 
@@ -485,6 +502,8 @@ def plan_decision(
         "planner_error": result.planner_error,
         "reasoning": result.reasoning,
         "retries": result.retries,
+        # Llegar al planner significa que ninguna regla local aplicó.
+        "evaluated": list(LOCAL_RULES),
     }
     if result.router == "no_plan":
         # El LLM respondió sin pasos o con algo que no valida. Una pregunta de

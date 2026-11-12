@@ -1,5 +1,40 @@
 # Cambios
 
+## Sin publicar — lote 6 (operación)
+
+Nada mueve la línea base de prompts (`prompt_hash`).
+
+### 6a — Hermeticidad, `--version`, resultado parcial, CI
+- La suite de tests no ve el entorno del dev: `conftest.py` borra `MINKA_*`, `AWS_*` y
+  `ANTHROPIC_API_KEY`, apunta `HOME` y `MINKA_HOME` a temporales y los restaura al final.
+- `minka --version`: versión, commit y `requested_revision` (de `direct_url.json`); dice si la
+  instalación es editable o desde un wheel local.
+- Fallos de red, timeout, throttling y credenciales (SDK de anthropic y botocore) en el bucle del
+  agente devuelven el texto de las vueltas completadas más `⚠ corrida interrumpida: <tipo>, N vueltas
+  completadas`; SSO vencido sugiere `aws sso login --profile <perfil>` sin traceback. El parcial no
+  es turno útil, corta el plan, no cuenta como acierto en `evals quality` y se cuenta en `stats`
+  (`interrumpidas`, `respuestas vacías`). `TypeError` y Ctrl-C siguen subiendo; sin reintentos extra.
+  La CLI sale con 1 y una línea; el REPL sigue vivo.
+- `.github/workflows/ci.yml`: pytest con lock (3.12/3.13), ruff, escaneo de secretos con
+  `security.scan_text` (permitidos solo en `tests/`), `prompt_hash` del motor contra
+  `baseline/prompt_hash_motor.txt`, build + instalación aislada, versión == tag en push de tag,
+  resolución sin lock. Sin secrets, `permissions: contents: read`.
+
+### 6b — Release/rollback, `minka trace`, retención, docs de operación
+- `scripts/release.sh vX.Y.Z [--dry-run]`: verifica (status limpio, versión, README, tag libre,
+  `uv lock --check`, CI por `gh` si existe), construye, crea el tag anotado local, instala desde el
+  tag en un `UV_TOOL_DIR` temporal y compara `--version`; solo imprime los comandos de push.
+  `scripts/rollback.sh vANTERIOR` reinstala y comprueba `--version` y `doctor` sin tocar `MINKA_HOME`.
+  Probados contra un repo git local (`scripts/verify_release_scripts.sh`, `tests/test_release_scripts.py`).
+- `minka trace` (apagado por defecto; `TRACE_ENABLED` o `--trace`): un JSONL por corrida en
+  `output/trace/<día>/<run_id>.jsonl` (0700/0600) con eventos `route` (reglas locales descartadas),
+  `turn`, `tool` (args filtrados, tamaño del resultado, bloqueada) y `end`; nunca texto del modelo
+  ni contenido de tools; rotación `TRACE_KEEP_DAYS` (7) anunciada; `trace <run_id>`, `--last`, `--clear`.
+- Retención: `agent_runs.jsonl` rota a `AGENT_LOG_KEEP_DAYS` (30) con aviso y copia `.1`, sin tocar
+  métricas. `minka doctor` muestra tamaños (`.chromadb`, logs, trace, runs) y avisa sobre
+  `DOCTOR_SIZE_WARN_MB` (500).
+- `docs/OPERACION.md`: qué se guarda y por cuánto, costo, SSO, `MINKA_HOME`, publicar/revertir, no verificado.
+
 ## 0.2.1 — 2026-11-12
 
 Tres lotes sobre la base 0.1.0 (REPL con pegado, inferencia de proyecto, `knowledge init`). Ningún cambio

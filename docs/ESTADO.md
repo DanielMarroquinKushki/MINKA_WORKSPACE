@@ -158,7 +158,10 @@ valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con
 | `--index-repos` / `--index-knowledge` | índice ChromaDB de código / de `.md` (extra `[rag]`) |
 | `--evaluate`, `--optimize-prompt`, `--push-prompts` | nivel 5/6 y Langfuse; requieren flags de config y LLM |
 | `minka init [--yes]` | onboarding guiado; nunca imprime lo que escribes |
-| `minka doctor [--project]` | Python, uv, sesión, REPOS, chromadb, proyecto, contexto vivo |
+| `minka doctor [--project]` | Python, uv, sesión, REPOS, chromadb, proyecto, contexto vivo, tamaños de datos (aviso sobre `DOCTOR_SIZE_WARN_MB`) |
+| `minka --version` | versión, commit y `requested_revision` de la instalación (o "editable") |
+| `--trace` / `TRACE_ENABLED` | traza local de la corrida en `output/trace/<día>/<run_id>.jsonl`; apagada por defecto |
+| `minka trace [run_id \| --last \| --clear]` | lista, lee o borra las trazas locales |
 | `minka stats [--day\|--month] [--project] [--agent] [--source]` | tokens, caché, costo, rutas, citas, afirmaciones, `prompt_hash` |
 | `minka evals routing [--runs 1-5] [--json-out]` | mide el planner con 53 casos (`core/evals/routing_cases.json`); cuesta tokens |
 | `minka knowledge check [--project]` | citas del knowledge contra REPOS; exit 1 si hay rotas |
@@ -180,9 +183,12 @@ valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con
   `stacks.py:26`), `COMPLIANCE` (`["pci"]` opcional), `REPOS` (alias → ruta, relativa a `REPOS_ROOT`
   o absoluta), `RAG_ENABLED`, `AGENT_TOOLS`, `AGENT_KNOWLEDGE`, `PR_CHECKLIST`, `RISK_PATTERNS`,
   `CORE_MODULE_NAME`.
-- **En disco**: métricas por corrida (números y nombres, `output/metrics/runs/<día>.jsonl`), traza de
-  depuración con la tarea y 500 caracteres del resultado (`output/logs/agent_runs.jsonl`,
-  `base_agent.py:521-523`), estado de una corrida interrumpida, borradores de knowledge.
+- **En disco**: métricas por corrida (números y nombres, `output/metrics/runs/<día>.jsonl`, sin
+  retención automática), log de corridas de los agentes con la tarea y 500 caracteres del resultado
+  (`output/logs/agent_runs.jsonl`; rota a `AGENT_LOG_KEEP_DAYS` = 30 con copia `.1` y aviso), traza
+  opcional por corrida sin texto del modelo ni contenido de tools (`output/trace/`, 0700/0600, rota a
+  `TRACE_KEEP_DAYS` = 7), estado de una corrida interrumpida, borradores de knowledge. Detalle y
+  diagnóstico: `docs/OPERACION.md`.
   **Solo en memoria**: historial de la sesión, investigación oculta, contexto vivo (no entra en logs
   ni métricas, `live_context.py:9-10`).
 - **Qué no poner en knowledge, contexto vivo ni prompts**: secretos, llaves, tokens, API keys, PAN o
@@ -337,8 +343,11 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
   reporte del set de oro (medición antes/después con tope).
 - `fuente_desactualizada` en `knowledge check` y soporte node en `knowledge init` (diseño ciclo 5).
 - Formato de ruff pendiente en 62 archivos (`ruff format --check`).
-- Ideas anotadas sin abrir: `minka trace` (traza local por corrida, apagada por defecto), skills por
-  proyecto, detección de contradicciones entre pasos de un plan.
+- Hechos en el lote 6 (sin publicar): suite hermética, `--version`, resultado parcial ante fallos de
+  red/timeout/throttling/credenciales, CI en GitHub Actions (no ejecutado aún: cuota de Actions en
+  repo privado **no verificada**), `scripts/release.sh` / `rollback.sh` probados contra un repo
+  temporal, `minka trace`, retención de `agent_runs.jsonl`, tamaños en `doctor`, `docs/OPERACION.md`.
+- Ideas anotadas sin abrir: skills por proyecto, detección de contradicciones entre pasos de un plan.
 
 ## 12. Cómo usarlo bien
 

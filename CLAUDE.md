@@ -34,6 +34,11 @@ Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
 - `minka knowledge check --project P`: verifica las citas `archivo:línea` de
   `knowledge/extracted/` y del catálogo de riesgos contra REPOS (exit 1 si hay rotas).
 - `minka evals routing --runs N`: mide el planner (cuesta tokens).
+- `minka --version`: versión, commit y `requested_revision`; `minka trace [run_id|--last|--clear]`
+  lee las trazas locales (solo existen con `TRACE_ENABLED` o `--trace`; ver `docs/OPERACION.md`).
+- Fallos de red/timeout/throttling/credenciales durante una corrida devuelven un **resultado
+  parcial** con la línea `⚠ corrida interrumpida: <tipo>, N vueltas completadas`; no es turno
+  útil ni acierto de evals, la CLI sale con 1 y el REPL sigue. `TypeError` y Ctrl-C suben.
 
 **Router (`core/orchestrator/router.py`), capas en orden:** saludo/estado/meta/ambiguo
 (costo 0) → `info_direct` si `PLANNER_SKIP_INFO=true` y el pedido es una pregunta de
@@ -241,3 +246,12 @@ aws sso login --profile bedrock
 - Instalar para desarrollar: `uv sync --extra dev` (dependencias en `pyproject.toml`;
   no hay requirements.txt). Tests: `uv run pytest`; lint: `uv run ruff check`.
 - Dependencias AWS: `anthropic[bedrock]`, `boto3`, `botocore`. AWS CLI para SSO.
+- La suite es hermética (`tests/conftest.py`): borra `MINKA_*`, `AWS_*` y `ANTHROPIC_API_KEY`,
+  usa `HOME`/`MINKA_HOME` temporales. Debe pasar igual con `MINKA_QUIET=1 MINKA_SOURCE=bridge
+  MINKA_PLAIN=1` exportadas. Los tests nunca llaman al modelo: clientes falsos.
+- CI (`.github/workflows/ci.yml`): pytest 3.12/3.13 con lock y sin lock, ruff, escaneo de secretos,
+  `prompt_hash` del motor contra `baseline/prompt_hash_motor.txt` (cómo moverlo: `baseline/README.md`),
+  build + instalación aislada, `release.sh --dry-run`, versión == tag en push de tag.
+- Publicar: `scripts/release.sh vX.Y.Z` (tag local + verificación; el push lo hace el dev a mano).
+  Revertir: `scripts/rollback.sh vANTERIOR`. Ambos se prueban con `scripts/verify_release_scripts.sh`
+  contra un repo temporal. Operación diaria y retención: `docs/OPERACION.md`.

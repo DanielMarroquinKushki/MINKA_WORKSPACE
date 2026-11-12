@@ -18,6 +18,7 @@ import sys
 from abc import ABC, abstractmethod
 from collections import Counter
 from datetime import datetime, timezone
+from time import perf_counter
 
 import anthropic
 from rich.console import Console
@@ -354,6 +355,7 @@ class BaseAgent(ABC):
                 prog.update(iteration=self.iteration_count, status="esperando al modelo")
                 self._mark_cache_tail(messages)
 
+                turn_started = perf_counter()
                 try:
                     response = self.client.messages.create(
                         model=self._model(),
@@ -368,6 +370,8 @@ class BaseAgent(ABC):
                     return self._interrupted(task, messages, exc)
                 self._accumulate_usage(response)
                 usage = getattr(response, "usage", None)
+                if getattr(self, "trace", None) is not None:
+                    self._trace_turn(response, usage, turn_started)
                 prog.update(
                     tokens_in=getattr(usage, "input_tokens", None),
                     tokens_out=getattr(usage, "output_tokens", None),
@@ -401,6 +405,33 @@ class BaseAgent(ABC):
             result = self._extract_text(response) or ITERATIONS_EXHAUSTED
             self._log(task, result)
             return result
+
+    def _trace_turn(self, response, usage, started: float) -> None:
+        self.trace.event(
+            "turn",
+            agent=self.name,
+            iteration=self.iteration_count,
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+            cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            stop_reason=getattr(response, "stop_reason", None),
+            tool_calls=sum(1 for b in (getattr(response, "content", None) or []) if getattr(b, "type", "") == "tool_use"),
+            ms=int((perf_counter() - started) * 1000),
+        )
+
+    def _trace_tool(self, entry: dict, content: str, started: float, blocked: bool) -> None:
+        self.trace.event(
+            "tool",
+            agent=self.name,
+            name=entry.get("name"),
+            args=entry.get("args") or {},
+            result_chars=len(content),
+            result_lines=content.count("\n") + 1 if content else 0,
+            is_error=content.startswith("ERROR:"),
+            blocked=bool(blocked),
+            ms=int((perf_counter() - started) * 1000),
+        )
 
     def _interrupted(self, task: str, messages: list[dict], exc: BaseException) -> str:
         """Texto de las vueltas completadas + línea de interrupción. Marca el usage (el costo de
@@ -554,7 +585,11 @@ class BaseAgent(ABC):
             # corta los loops en que el modelo repite la misma lectura.
             key = (block.name, json.dumps(dict(block.input), sort_keys=True, default=str))
             seen[key] += 1
-            logged.append(_tool_log_entry(block.name, dict(block.input), blocked=limit and seen[key] > limit))
+            blocked = bool(limit and seen[key] > limit)
+            entry = _tool_log_entry(block.name, dict(block.input), blocked=blocked)
+            logged.append(entry)
+            tracing = getattr(self, "trace", None) is not None
+            tool_started = perf_counter()
             if limit and seen[key] > limit:
                 self.last_usage["repeated_tool_calls"] = (
                     self.last_usage.get("repeated_tool_calls", 0) + 1
@@ -579,6 +614,8 @@ class BaseAgent(ABC):
                         "is_error": True,
                     }
                 )
+                if tracing:
+                    self._trace_tool(entry, f"ERROR: {msg}", tool_started, blocked=True)
                 continue
             if getattr(self.config, "DEBUG", False):
                 console.print(
@@ -617,6 +654,8 @@ class BaseAgent(ABC):
                         "is_error": True,
                     }
                 )
+            if tracing:
+                self._trace_tool(entry, content, tool_started, blocked=False)
             self._note_security()
         # Se cuelga de la vuelta que pidió las tools (la última entrada de per_iteration).
         usage = getattr(self, "last_usage", None)

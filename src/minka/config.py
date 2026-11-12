@@ -249,6 +249,15 @@ MEM0_EMBEDDER_MODEL = os.getenv("MEM0_EMBEDDER_MODEL", "amazon.titan-embed-text-
 # DeepEval usa un LLM como juez (G-Eval); también debe aceptar `temperature` → Claude 3.
 EVAL_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "us.anthropic.claude-3-haiku-20240307-v1:0")
 
+# Traza local por corrida (`minka trace`): JSONL en <DATA_DIR>/output/trace/<día>/. Off por
+# defecto; `--trace` la enciende por corrida. Rotación por días, anunciada al abrir la corrida.
+TRACE_ENABLED = os.getenv("TRACE_ENABLED", "").strip().lower() in ("1", "true", "yes")
+TRACE_KEEP_DAYS = int(os.getenv("TRACE_KEEP_DAYS", "7"))
+# Retención de output/logs/agent_runs.jsonl (no toca las métricas de output/metrics/runs).
+AGENT_LOG_KEEP_DAYS = int(os.getenv("AGENT_LOG_KEEP_DAYS", "30"))
+# `minka doctor` avisa si .chromadb, logs, trace o runs superan este tamaño.
+DOCTOR_SIZE_WARN_MB = int(os.getenv("DOCTOR_SIZE_WARN_MB", "500"))
+
 # Observabilidad (Langfuse): trazas del loop de agentes (tokens/costo/latencia).
 # Off por defecto. Requiere credenciales LANGFUSE_* en el entorno y un servicio
 # Langfuse (self-host Docker o cloud). Actívalo en config_local.py.

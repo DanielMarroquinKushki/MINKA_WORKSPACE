@@ -48,7 +48,7 @@ from typer.core import TyperGroup
 
 from minka._app import PLAIN_ENV, QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
-from minka.core import metrics, render
+from minka.core import metrics, render, trace_log
 from minka.core.orchestrator import router
 
 
@@ -554,6 +554,9 @@ def main(
     debug: bool = typer.Option(
         False, "--debug", help="Muestra input y resultado de cada tool call."
     ),
+    trace: bool = typer.Option(
+        False, "--trace", help="Traza local de esta corrida (ver `minka trace`). Equivale a TRACE_ENABLED."
+    ),
     completo: bool = typer.Option(
         False,
         "--completo",
@@ -805,6 +808,8 @@ def main(
     # Flags de runtime que leen los agentes (avisos en stderr, progreso en TTY).
     config.QUIET = quiet
     config.PROGRESS_ENABLED = json_out is None
+    if trace:
+        config.TRACE_ENABLED = True
 
     if task:
         try:
@@ -897,6 +902,39 @@ def main(
         except (KeyboardInterrupt, EOFError):
             pass
         console.print("\nSesión terminada. Hasta luego.")
+
+
+@app.command("trace", help="Lee o limpia las trazas locales por corrida (output/trace, TRACE_ENABLED o --trace).")
+def trace_cmd(
+    run_id: str = typer.Argument(None, help="run_id (o prefijo único) de la corrida a leer."),
+    last: bool = typer.Option(False, "--last", help="Lee la corrida trazada más reciente."),
+    clear: bool = typer.Option(False, "--clear", help="Borra todas las trazas."),
+):
+    if clear:
+        n = trace_log.clear(config)
+        console.print(f"trace: {n} traza(s) retirada(s)." if n else "trace: no había trazas.")
+        return
+    if run_id:
+        path = trace_log.find_run(config, run_id)
+        if path is None:
+            console.print(f"trace: no hay una corrida única que empiece por {run_id!r}.")
+            raise typer.Exit(code=1)
+    elif last:
+        runs = trace_log.list_runs(config)
+        if not runs:
+            console.print("trace: no hay trazas. Activa TRACE_ENABLED o corre con --trace.")
+            raise typer.Exit(code=1)
+        path = runs[-1]
+    else:
+        runs = trace_log.list_runs(config)
+        if not runs:
+            console.print("trace: no hay trazas. Activa TRACE_ENABLED o corre con --trace.")
+            return
+        for p in runs[-20:]:
+            console.print(f"{p.parent.name}  {p.stem}", markup=False, highlight=False)
+        console.print(f"[dim]{len(runs)} traza(s); `trace <run_id>` o `trace --last` para leer una.[/dim]")
+        return
+    console.print(trace_log.format_run(path, trace_log.read_run(path)), markup=False, highlight=False)
 
 
 @app.command("stats", help="Tokens, cache, costo y tiempo de las corridas registradas.")

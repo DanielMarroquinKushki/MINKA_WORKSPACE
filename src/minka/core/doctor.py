@@ -229,6 +229,21 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
                 critical=False,
             )
         )
+    from minka.core import retention
+
+    sizes = retention.data_dir_sizes(cfg)
+    warn_mb = int(getattr(cfg, "DOCTOR_SIZE_WARN_MB", retention.DEFAULT_SIZE_WARN_MB) or retention.DEFAULT_SIZE_WARN_MB)
+    over = [label for label, n in sizes.items() if n > warn_mb * 1_000_000]
+    checks.append(
+        Check(
+            "Tamaño de datos",
+            not over,
+            " · ".join(f"{label} {retention.fmt_mb(n)}" for label, n in sizes.items()),
+            f"Supera {warn_mb} MB (DOCTOR_SIZE_WARN_MB): {', '.join(over)}. "
+            "Revisa `minka trace --clear`, la rotación de agent_runs.jsonl o reindexa chromadb.",
+            critical=False,
+        )
+    )
     return checks
 
 
