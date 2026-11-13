@@ -118,7 +118,9 @@ class RouteDecision:
 
 
 # Orden de las reglas locales de `local_decision`; si ninguna aplica, el pedido va al planner.
-LOCAL_RULES = ("small_talk", "state", "meta", "review", "followup_change", "ambiguous", "info_direct")
+LOCAL_RULES = (
+    "small_talk", "state", "meta", "review", "followup_change", "inherit_repo", "ambiguous", "info_direct",
+)
 
 
 ASK_AMBIGUOUS = (
@@ -156,6 +158,38 @@ def has_code_reference(request: str, repos: dict | None = None) -> bool:
         return True
     low = _normalize(request)
     return any(re.search(rf"\b{re.escape(_normalize(alias))}\b", low) for alias in (repos or {}))
+
+
+def sole_repo_alias(request: str, repos: dict | None) -> str | None:
+    """Alias de REPOS citado como palabra exacta cuando es la ÚNICA referencia a código del
+    pedido ("¿y en el repo hsm?" → "hsm"); None si no cita alias, cita dos o cita algo más."""
+    low = _normalize(request)
+    hits = [a for a in (repos or {}) if re.search(rf"\b{re.escape(_normalize(a))}\b", low)]
+    if len(hits) != 1:
+        return None
+    rest = re.sub(rf"\b{re.escape(hits[0])}\b", " ", request, flags=re.IGNORECASE)
+    return None if any(re.search(p, rest) for p in _CODE_REF) else hits[0]
+
+
+def is_repo_followup(request: str, repos: dict | None) -> str | None:
+    """Seguimiento que solo cambia el repo: pedido corto (≤6 palabras o arranque de
+    seguimiento), sin pregunta propia ni verbo de escritura, fallo, diff o reporte, y cuya única
+    referencia a código es un alias de REPOS. Devuelve el alias o None."""
+    alias = sole_repo_alias(request, repos)
+    if alias is None:
+        return None
+    low = _normalize(request)
+    if not (len(low.split()) <= 6 or re.match(_FOLLOWUP_START, low)):
+        return None
+    if (
+        is_information_question(request)
+        or has_write_verb(request)
+        or has_failure(request)
+        or has_diff_reference(request)
+        or asks_report(request)
+    ):
+        return None
+    return alias
 
 
 def has_failure(request: str) -> bool:
@@ -398,6 +432,31 @@ def local_decision(
             evaluated=tried,
         )
     tried.append("followup_change")
+    # "¿y en el repo hsm?" tras una consulta útil de architecture con citas: el mismo pedido
+    # sobre otro repo, sin planner. Sin turno previo no hay nada que repetir: pide precisar.
+    # Tras pr_review/development o sin citas sigue al planner (recibe el historial).
+    alias = is_repo_followup(request, repos)
+    if alias is not None:
+        if (
+            last is not None
+            and last.get("useful", True)
+            and last.get("citations")
+            and (last.get("agents") or [""])[-1] == "architecture_agent"
+        ):
+            return RouteDecision(
+                "inherit_repo",
+                "mismo pedido, otro repo",
+                agents=[last["agents"][-1]],
+                confidence="media",
+                notices=[f"repo {alias}"],
+                task_suffix=f"Repite el análisis anterior sobre el repo {alias}",
+                evaluated=tried,
+            )
+        if last is None:
+            return _fallback_decision(
+                session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS, evaluated=tried
+            )
+    tried.append("inherit_repo")
     if is_ambiguous(request, repos):
         return _fallback_decision(
             session_turns, "ambiguous", "ambiguo: precisa el pedido", ASK_AMBIGUOUS, evaluated=tried

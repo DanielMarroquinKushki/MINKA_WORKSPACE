@@ -176,12 +176,20 @@ def test_force_full_apaga_el_perfil_breve(orch):
     assert rp.BOUNDED_NOTE not in out
 
 
-def test_agente_forzado_queda_en_completo(orch):
+def test_agente_forzado_con_consulta_simple_es_breve(orch):
+    # --agent con una pregunta de información simple: perfil breve (misma regla que info_direct).
     out = orch.run("¿dónde se resuelve el token?", forced_agent="architecture")
-    assert orch.last_router == "forced"
-    assert orch.fake_agents["architecture_agent"].profiles == [rp.PROFILE_FULL]
-    assert rp.BOUNDED_NOTE not in out and "¿Quieres" not in out
+    assert orch.last_router == "forced" and orch.last_reason == "override --agent · consulta breve"
+    assert orch.fake_agents["architecture_agent"].profiles == [rp.PROFILE_BRIEF]
+    assert out.endswith(rp.BOUNDED_NOTE) and "¿Quieres" not in out
     assert orch.last_run_record["closings_removed"] == 1
+
+
+def test_agente_forzado_con_pedido_largo_queda_en_completo(orch):
+    out = orch.run("analiza el flujo de pagos y luego documenta los riesgos", forced_agent="architecture")
+    assert orch.last_reason == "override --agent"
+    assert orch.fake_agents["architecture_agent"].profiles == [rp.PROFILE_FULL]
+    assert rp.BOUNDED_NOTE not in out
 
 
 def test_report_forzado_conserva_su_formato(orch):

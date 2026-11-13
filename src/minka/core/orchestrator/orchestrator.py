@@ -407,9 +407,17 @@ class Orchestrator:
             return f"Agente desconocido: {forced_agent}"
         agent.trace = self.trace
 
-        self._apply_decision(
-            router.RouteDecision("forced", "override --agent", [name], confidence="alta")
+        # Forzado (--agent, bridge): completo, salvo que el pedido sea una consulta de
+        # información simple (misma regla que info_direct): entonces perfil breve. --completo,
+        # --debug y "en detalle" lo apagan. El router sigue siendo "forced".
+        brief = (
+            not self.force_full
+            and not response_profile.wants_full(request)
+            and router.is_simple_info_question(request)
+            and not router.asks_report(request)
         )
+        reason = "override --agent · consulta breve" if brief else "override --agent"
+        self._apply_decision(router.RouteDecision("forced", reason, [name], confidence="alta"))
         self.last_plan = [name]
         self.state.reset()
         agent.conversation = self.memory.as_messages()
@@ -417,16 +425,19 @@ class Orchestrator:
         agent.show_banner = False
         agent.live_context_block = self._live_block()
         agent.decisions_block = self._decisions_block(request)
-        agent.voice = None  # forzado = completo: sin voz
-        # Forzado (--agent, bridge): siempre completo, sin perfil breve.
-        self.last_profile = response_profile.profile_for("forced", name, force_full=True)
+        agent.voice = None  # forzado: sin voz
+        self.last_profile = response_profile.profile_for(
+            "info_direct" if brief else "forced", name, force_full=not brief
+        )
         agent.response_profile = self.last_profile
         result = agent.run(task)
         result = self._verify_claims(result, request, agent)
         self.state.record_step(name, task, result)
         self._record_usage(agent)
         useful = router.is_useful_result(result) and not self._agent_failed(agent)
-        return self._record_turn(request, [name], useful, result)
+        result = self._record_turn(request, [name], useful, result)
+        # Solo para mostrar (perfil breve): no va a la memoria ni al modelo; nada en un fallo.
+        return response_profile.with_bounded_note(result, self.last_profile) if useful else result
 
     def _agent_failed(self, agent) -> bool:
         """Corrida interrumpida (parcial) o respuesta vacía: el turno no es útil y la corrida no es ok."""

@@ -43,7 +43,7 @@ def test_desactivacion_en_detalle_y_force_full():
 
 
 def test_forced_y_bridge_siguen_en_completo():
-    # _run_forced siempre pasa force_full=True (--agent y bridge).
+    # _run_forced pasa force_full=True salvo con una consulta de información simple (perfil breve).
     assert rp.profile_for("forced", ARCH, force_full=True, plan_agents=[ARCH]) == rp.PROFILE_FULL
     assert rp.profile_for("forced", ARCH, plan_agents=[ARCH]) == rp.PROFILE_FULL
 

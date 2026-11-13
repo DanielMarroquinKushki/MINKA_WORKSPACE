@@ -1,5 +1,18 @@
 # Cambios
 
+## Sin publicar — lote 5 (router)
+
+Nada mueve la línea base de prompts (`prompt_hash`).
+
+- `--agent` (ka, bridge) con una consulta de información simple usa el perfil breve (razón
+  `override --agent · consulta breve`); `--completo`, `--debug` y "en detalle" lo apagan. El router
+  sigue siendo `forced`; flags, claves de `--json-out`, exit codes y `--read-only` no cambian.
+- Regla local `inherit_repo` (antes de `ambiguous`): un seguimiento corto cuya única referencia a
+  código es un alias de `REPOS` ("¿y en el repo hsm?") tras una consulta útil de architecture con
+  citas repite el análisis sobre ese repo sin planner (confianza media, `repo <alias>` en la línea
+  de decisión). Sin turno previo pide precisar; tras pr_review/development o sin citas va al planner.
+- 7 casos golden nuevos (60 en total) con `repos` por caso en `routing_cases.json`.
+
 ## 0.2.2 — lote 6 (operación)
 
 Nada mueve la línea base de prompts (`prompt_hash`).

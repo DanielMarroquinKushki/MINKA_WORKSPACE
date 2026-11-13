@@ -68,7 +68,9 @@ def harness(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
-def test_routing_golden(harness, case):
+def test_routing_golden(harness, case, monkeypatch, tmp_path):
+    if case.get("repos"):  # el caso trae sus propios alias (p.ej. seguimiento entre repos)
+        monkeypatch.setattr(config, "REPOS", {a: str(tmp_path / a) for a in case["repos"]}, raising=False)
     harness.llm_plan = case.get("llm")
     harness.orch.session_turns = list(case.get("turns") or [])
     out = harness.orch.run(_task_with_history(case))
@@ -95,7 +97,7 @@ def test_casos_cubren_los_12_tipos_y_son_genericos():
         "stack_trace", "implementar", "reporte", "ambiguo_sin_historial", "meta", "seguimiento_hereda",
     ):
         assert tipo in ids
-    assert len(CASES) >= 52
+    assert len(CASES) >= 60
     raw = json.dumps(CASES).lower()
     # Palabras del proyecto de referencia que NO deben filtrarse a los casos genéricos
     # (invertidas para que el propio grep del repo no las encuentre).

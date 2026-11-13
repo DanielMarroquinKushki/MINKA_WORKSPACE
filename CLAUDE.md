@@ -21,7 +21,8 @@ Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
   (✓/✗: Python, uv, sesión, REPOS, chromadb, proyecto, contexto vivo)
 
 **Comandos y flags de la CLI:**
-- `minka "pedido"` / `minka` (REPL). `--agent <a>` salta el planner (modo completo).
+- `minka "pedido"` / `minka` (REPL). `--agent <a>` salta el planner; sale completo salvo que el
+  pedido sea una consulta de información simple (misma regla que `info_direct`): entonces breve.
 - `--completo` fuerza la respuesta completa; por defecto las consultas puntuales
   (`router=info_direct`) salen breves con todas las citas y una nota "respuesta acotada".
   "en detalle" en el pedido hace lo mismo. `--debug` también desactiva el perfil breve.
@@ -41,7 +42,8 @@ Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
   útil ni acierto de evals, la CLI sale con 1 y el REPL sigue. `TypeError` y Ctrl-C suben.
 
 **Router (`core/orchestrator/router.py`), capas en orden:** saludo/estado/meta/ambiguo
-(costo 0) → `info_direct` si `PLANNER_SKIP_INFO=true` y el pedido es una pregunta de
+(costo 0) → `inherit_repo` ("¿y en el repo hsm?" tras una consulta útil de architecture con citas:
+repite el análisis sobre ese alias, sin planner) → `info_direct` si `PLANNER_SKIP_INFO=true` y el pedido es una pregunta de
 información simple (architecture directo, sin planner) → planner LLM con reglas duras
 (`no_plan`, `planner_error`, `followup_change`, `inherit`, `no_changes`). "¿En qué
 quedamos?" al abrir la sesión responde con el contexto vivo sin modelo.

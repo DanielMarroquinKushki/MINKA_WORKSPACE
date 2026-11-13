@@ -1,5 +1,5 @@
 {
-  "_doc": "Casos golden del router (genéricos). llm = plan del planner LLM simulado: lista de agentes; [] = respondió sin pasos (empty_plan); null = error del LLM; ausente = no debe llamarse. turns = turnos previos de la sesión. El fixture configura REPOS={'pagos': ...}. eval='info' marca los casos que usa `minka evals routing` (solo planner).",
+  "_doc": "Casos golden del router (genéricos). llm = plan del planner LLM simulado: lista de agentes; [] = respondió sin pasos (empty_plan); null = error del LLM; ausente = no debe llamarse. turns = turnos previos de la sesión. El fixture configura REPOS={'pagos': ...}; repos = lista de alias que sustituye ese REPOS en el caso. eval='info' marca los casos que usa `minka evals routing` (solo planner).",
   "cases": [
     {
       "id": "saludo",
@@ -871,6 +871,193 @@
         ],
         "router": "inherit",
         "llm_called": false
+      }
+    },
+    {
+      "id": "repo_followup_hereda",
+      "_nota": "Seguimiento que solo cambia el repo tras una consulta útil de architecture con citas: mismo pedido sobre el alias citado, sin planner.",
+      "request": "¿y en el repo hsm?",
+      "repos": [
+        "pos",
+        "hsm",
+        "core"
+      ],
+      "turns": [
+        {
+          "request": "¿dónde se firma el request?",
+          "agents": [
+            "architecture_agent"
+          ],
+          "useful": true,
+          "result": "El request se firma en internal/sign/jws.go:58 dentro de signRequest()."
+        }
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "inherit_repo",
+        "llm_called": false,
+        "confidence": "media",
+        "line_contains": [
+          "→ architecture (mismo pedido, otro repo) · repo hsm"
+        ]
+      }
+    },
+    {
+      "id": "repo_followup_tras_pr_review_va_al_planner",
+      "request": "¿y en el repo hsm?",
+      "repos": [
+        "pos",
+        "hsm",
+        "core"
+      ],
+      "turns": [
+        {
+          "request": "revisa el diff de la rama feature/login",
+          "agents": [
+            "pr_review_agent"
+          ],
+          "useful": true,
+          "result": "Hallazgo: internal/sign/jws.go:58 no valida el kid."
+        }
+      ],
+      "llm": [
+        "architecture_agent"
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "llm",
+        "llm_called": true
+      }
+    },
+    {
+      "id": "repo_followup_alias_sin_repo",
+      "request": "¿y en hsm?",
+      "repos": [
+        "pos",
+        "hsm",
+        "core"
+      ],
+      "turns": [
+        {
+          "request": "¿dónde se firma el request?",
+          "agents": [
+            "architecture_agent"
+          ],
+          "useful": true,
+          "result": "El request se firma en internal/sign/jws.go:58 dentro de signRequest()."
+        }
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "inherit_repo",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "repo_followup_sin_historial_es_ambiguo",
+      "request": "¿y en el repo hsm?",
+      "repos": [
+        "pos",
+        "hsm",
+        "core"
+      ],
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "confidence": "baja",
+        "reply_contains": [
+          "Tu pedido es ambiguo"
+        ]
+      }
+    },
+    {
+      "id": "repo_followup_con_verbo_de_escritura_no_hereda",
+      "request": "arregla eso en el repo hsm",
+      "repos": [
+        "pos",
+        "hsm",
+        "core"
+      ],
+      "turns": [
+        {
+          "request": "¿dónde se firma el request?",
+          "agents": [
+            "architecture_agent"
+          ],
+          "useful": true,
+          "result": "El request se firma en internal/sign/jws.go:58 dentro de signRequest()."
+        }
+      ],
+      "llm": [
+        "development_agent"
+      ],
+      "expect": {
+        "agents": [
+          "development_agent"
+        ],
+        "router": "llm",
+        "llm_called": true
+      }
+    },
+    {
+      "id": "repo_followup_con_pregunta_propia_es_info_direct",
+      "request": "¿y en el repo hsm cómo se firma el request?",
+      "repos": [
+        "pos",
+        "hsm",
+        "core"
+      ],
+      "turns": [
+        {
+          "request": "¿dónde se firma el request?",
+          "agents": [
+            "architecture_agent"
+          ],
+          "useful": true,
+          "result": "El request se firma en internal/sign/jws.go:58 dentro de signRequest()."
+        }
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "info_direct",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "repo_followup_alias_palabra_comun",
+      "_nota": "Alias que además es palabra común: hereda igual, con confianza media.",
+      "request": "¿y el core?",
+      "repos": [
+        "pos",
+        "hsm",
+        "core"
+      ],
+      "turns": [
+        {
+          "request": "¿dónde se firma el request?",
+          "agents": [
+            "architecture_agent"
+          ],
+          "useful": true,
+          "result": "El request se firma en internal/sign/jws.go:58 dentro de signRequest()."
+        }
+      ],
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "inherit_repo",
+        "llm_called": false,
+        "confidence": "media"
       }
     }
   ]

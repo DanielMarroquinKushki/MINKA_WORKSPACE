@@ -5,7 +5,8 @@ Perfiles (los decide el orquestador a partir del router, nunca el agente):
                TODAS las citas archivo:línea y sin ofrecer más trabajo al final.
   exploratorio planner (router llm) con plan de solo architecture_agent: resumen de 5 a 10
                líneas con la conclusión y luego "Evidencia" con las citas clave archivo:línea.
-  completo     investigación multi-agente, agente forzado (--agent, bridge), fix-loop, resume.
+  completo     investigación multi-agente, agente forzado (--agent, bridge) salvo consulta de
+               información simple (ahí breve), fix-loop, resume.
   reporte      report_agent: redacta solo sobre el resultado previo (o lo leído con sus tools),
                sin código ni cifras que no estén ahí, "sin evidencia" donde falte, ~60 líneas.
 
