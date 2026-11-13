@@ -15,6 +15,7 @@ ahí salvo lo que pida una tool de escritura aprobada por el ApprovalGate (parch
 | `config_local.py`, `.env` | backend, perfil AWS, `DEFAULT_PROJECT`, `REPOS_ROOT` | el dev (`minka init` crea plantillas sin sobrescribir) | manual |
 | `projects/<p>/` | config, prompts, knowledge, evals del proyecto | el dev; `knowledge init --apply` solo añade | manual |
 | `active-context/<p>.md` | contexto vivo (ticket, pendientes) | el dev | manual |
+| `projects/<p>/evals/routing_feedback.jsonl`, `routing_cases.draft.json` | `/mal`: run_id, router, plan, pedido normalizado y redactado (≤120 caracteres; si no, solo sha256), agente esperado y nota; nunca respuestas ni historial | `/mal` en el REPL; `evals routing --from-feedback` | manual. Archivos 0600, carpeta 0700. Contienen texto de pedidos: **no versionar** |
 | `output/metrics/runs/<día>.jsonl` | una línea por corrida: tokens, costo, router, `prompt_hash`, contadores; nunca la tarea ni la respuesta | `Orchestrator._close_run_record` | sin rotación automática (son pequeñas; `minka stats --month` las lee) |
 | `output/logs/agent_runs.jsonl` | una línea por corrida de agente: tarea y 500 caracteres del resultado **redactados**, usage | `BaseAgent._log` | `AGENT_LOG_KEEP_DAYS` (30). Al abrir la primera corrida del proceso se retiran las líneas viejas, se avisa cuántas y queda copia completa en `agent_runs.jsonl.1` |
 | `output/trace/<día>/<run_id>.jsonl` | traza por corrida: `route`, `turn`, `tool`, `end`; nunca texto del modelo ni contenido de tools | `core/trace_log.py`, solo con `TRACE_ENABLED` o `--trace` | `TRACE_KEEP_DAYS` (7); la rotación se anuncia con una línea al abrir la corrida; `minka trace --clear` borra todo. Directorios 0700, archivos 0600 |
@@ -31,6 +32,14 @@ alguno supera `DOCTOR_SIZE_WARN_MB` (500).
 
 ## 2. Si el costo se dispara
 
+0. El REPL frena solo (lote 5): al llegar a `SESSION_MAX_USD` (5.0) o ante una ráfaga (`BURST_N`=3
+   corridas con agente seguidas a menos de `BURST_GAP_SECONDS`=5 s del fin de la anterior, el caso
+   del pegado partido en varias líneas) pregunta antes de lanzar el agente; "sí" sube el tope otro
+   escalón o reinicia la ráfaga, "no" descarta el pedido. Sin TTY o con `MINKA_SOURCE=bridge` sale
+   con 3 y una línea clara. Con router `llm` o plan de 2+ pasos la línea de decisión trae
+   `estimado ~$X (mediana de N corridas)` y pide confirmación si supera `ESTIMATE_CONFIRM_USD`
+   (0.50); con menos de `ESTIMATE_MIN_RUNS` corridas de esa ruta dice `sin estimado`. `/status`
+   muestra el $ de la sesión; `stats` y `doctor` avisan al alcanzar `DAILY_MAX_USD` (20) sin bloquear.
 1. `minka stats --day` (o `--month`). Mira primero **rutas del router**: `info_direct` es una
    llamada directa a architecture (barata); `llm` pasa por el planner y suele encadenar pasos.
    Si la proporción de `llm` subió, revisa qué pedidos lo provocan (`minka trace --last` con la
@@ -115,3 +124,9 @@ temporal (`file://`), nunca contra `origin`; `tests/test_release_scripts.py` lo 
 - La retención de `agent_runs.jsonl` reescribe el archivo completo una vez por proceso; con archivos
   de cientos de MB no se ha medido el tiempo.
 - `python 3.14` corre la suite localmente; el CI declara 3.12 y 3.13 (las de `requires-python`).
+- Freno de gasto, estimado y `/mal` (lote 5): probados con agentes, planner y reloj falsos y con
+  `Confirm.ask` simulado. La pregunta en una terminal real, el estimado con medianas reales de
+  `output/metrics/runs` y el borrador `--from-feedback` sobre un proyecto real no se ejecutaron.
+- El costo del planner entra en `cost_usd` desde el lote 5: las medianas de la ruta `llm` no son
+  comparables con las corridas anteriores (mismo `prompt_hash`, distinta contabilidad).
+- Las dos mediciones del lote 5 (`ka` breve, `inherit_repo`) son de una muestra por par.

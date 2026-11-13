@@ -158,6 +158,16 @@ CITATION_CHECK_ENABLED = os.getenv("CITATION_CHECK_ENABLED", "true").strip().low
 PLANNER_SKIP_INFO = os.getenv("PLANNER_SKIP_INFO", "true").strip().lower() in ("1", "true", "yes")
 # Veces que una misma tool con los mismos argumentos puede ejecutarse por corrida.
 TOOL_REPEAT_LIMIT = int(os.getenv("TOOL_REPEAT_LIMIT", "3"))
+# Freno de gasto (core/orchestrator/budget.py): tope por sesión del REPL (un "sí" lo sube otro
+# escalón), ráfaga de BURST_N corridas con agente a menos de BURST_GAP_SECONDS del fin de la
+# anterior, y estimado previo (router llm o plan de 2+ pasos) que pide confirmación si supera
+# ESTIMATE_CONFIRM_USD. DAILY_MAX_USD solo avisa en `stats` y `doctor`. 0 = apagado.
+SESSION_MAX_USD = float(os.getenv("SESSION_MAX_USD", "5.0"))
+BURST_N = int(os.getenv("BURST_N", "3"))
+BURST_GAP_SECONDS = float(os.getenv("BURST_GAP_SECONDS", "5"))
+ESTIMATE_CONFIRM_USD = float(os.getenv("ESTIMATE_CONFIRM_USD", "0.50"))
+ESTIMATE_MIN_RUNS = int(os.getenv("ESTIMATE_MIN_RUNS", "5"))
+DAILY_MAX_USD = float(os.getenv("DAILY_MAX_USD", "20.0"))
 # Tope de vueltas del architecture_agent por corrida (core/agents/base_agent.py): en la vuelta
 # tope-1 se le pide la respuesta final con lo recogido; la corrida cuenta en iterations_capped.
 ARCH_MAX_ITERATIONS = int(os.getenv("ARCH_MAX_ITERATIONS", "8"))

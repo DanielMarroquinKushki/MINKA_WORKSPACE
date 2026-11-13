@@ -126,7 +126,7 @@ def repl(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-de-prueba")
     monkeypatch.setattr(config, "USE_BEDROCK", False)
     monkeypatch.setattr(minka_main, "_make_orchestrator", lambda: orch)
-    monkeypatch.setattr(minka_main, "_print_status", lambda turns: orch.tasks.append("<status>"))
+    monkeypatch.setattr(minka_main, "_print_status", lambda turns, usd=0.0: orch.tasks.append("<status>"))
     return orch
 
 

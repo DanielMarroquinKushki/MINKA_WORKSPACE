@@ -7,6 +7,7 @@ resultado: esa traza de depuración sigue en output/logs/agent_runs.jsonl.
 import json
 import math
 import os
+import statistics
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -159,6 +160,22 @@ def build_run_record(
 def run_cost_usd(usage: dict) -> float:
     """Costo acumulado de los agentes de la corrida (0 para modelos sin tarifa)."""
     return sum(cost_usd(u) or 0.0 for u in usage.get("per_agent", []))
+
+
+def route_median_counts(month: str | None = None, cfg=None) -> dict[str, tuple[float, int]]:
+    """{ruta: (mediana de cost_usd, corridas)} del mes, solo corridas ok y fuera de EXCLUDED_SOURCES.
+    Datos reales únicamente: sin defaults, sin factores. {} si no hay registros o no se pueden leer."""
+    try:
+        records = [
+            r for r in read_run_records(month=month or local_day("%Y-%m"), cfg=cfg)
+            if r.get("ok") and r.get("source") not in EXCLUDED_SOURCES and r.get("cost_usd") is not None
+        ]
+    except Exception:  # noqa: BLE001
+        return {}
+    by: dict[str, list[float]] = {}
+    for r in records:
+        by.setdefault(r.get("router") or "other", []).append(float(r.get("cost_usd") or 0))
+    return {route: (round(statistics.median(costs), 4), len(costs)) for route, costs in by.items() if costs}
 
 
 def write_run_record(record: dict, cfg=None) -> bool:

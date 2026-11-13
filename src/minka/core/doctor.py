@@ -244,6 +244,25 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
             critical=False,
         )
     )
+    # Gasto del día (metrics/runs, sin eval_quality): solo aviso, nunca bloquea.
+    daily_max = float(getattr(cfg, "DAILY_MAX_USD", 0) or 0)
+    if daily_max > 0:
+        try:
+            from minka.core import metrics
+
+            spent = metrics.aggregate(metrics.read_run_records(cfg=cfg))["cost_usd"] or 0.0
+        except Exception:  # noqa: BLE001
+            spent = 0.0
+        over = spent >= daily_max
+        checks.append(
+            Check(
+                "Gasto del día",
+                not over,
+                f"${spent:.2f} de ${daily_max:.2f} (DAILY_MAX_USD; aviso, no bloquea)",
+                "Revisa `minka stats`; el tope diario es informativo.",
+                critical=False,
+            )
+        )
     return checks
 
 

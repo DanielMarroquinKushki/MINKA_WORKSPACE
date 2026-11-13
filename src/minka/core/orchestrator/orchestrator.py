@@ -10,6 +10,7 @@ Las operaciones de escritura las maneja el propio development_agent vía su
 ApprovalGate, así que el orquestador no necesita re-implementar el gate.
 """
 
+import dataclasses
 import json
 import os
 import uuid
@@ -25,6 +26,7 @@ from minka.core.memory.conversation_memory import ConversationMemory
 from minka.core.memory.live_context import load_live_context, wants_live_context
 from minka.core.orchestrator import (
     approval_gate,
+    budget,
     citation_check,
     claim_check,
     response_profile,
@@ -111,9 +113,58 @@ class Orchestrator:
         self.last_investigation_line: str | None = None
         self._docs_cache: tuple[str | None, str] | None = None
         self.last_citations_missing: int = 0
+        # Freno de gasto (budget.py): gasto de la sesión, ráfaga y estimado previo. El reloj se
+        # inyecta en tests (`self.budget.clock`); las medianas por ruta se leen una vez por sesión.
+        self.budget = budget.BudgetState()
+        self.route_medians_fn = metrics.route_median_counts
+        self._route_medians: dict[str, tuple[float, int]] | None = None
+        self.last_estimate: float | None = None
+        self.last_estimate_n: int = 0
+        # Decisión ya confirmada por el dev (estimado): la siguiente corrida de la MISMA tarea la
+        # reutiliza sin volver a llamar al planner.
+        self._confirmed: tuple[str, router.RouteDecision] | None = None
         # Contexto vivo del proyecto (live_context.py): foto ÚNICA por sesión, perezosa.
         self._live_context = None
         self._live_context_loaded = False
+
+    @property
+    def session_usd(self) -> float:
+        """Gasto acumulado de la sesión (planner e interrumpidas incluidos)."""
+        return self.budget.session_usd
+
+    def _budget_active(self) -> bool:
+        return (os.getenv(SOURCE_ENV) or self.source) not in budget.EXEMPT_SOURCES
+
+    def _medians(self) -> dict[str, tuple[float, int]]:
+        if self._route_medians is None:
+            try:
+                self._route_medians = dict(self.route_medians_fn() or {})
+            except Exception:  # noqa: BLE001 — sin medianas no hay estimado, nada más
+                self._route_medians = {}
+        return self._route_medians
+
+    def _estimate(self, decision: router.RouteDecision) -> str | None:
+        """Estimado previo solo para router llm o planes de 2+ pasos: mediana real de esa ruta
+        con al menos ESTIMATE_MIN_RUNS corridas; si no, "sin estimado". None = no aplica."""
+        self.last_estimate, self.last_estimate_n = None, 0
+        if decision.router != "llm" and len(decision.agents) < 2:
+            return None
+        median, n = self._medians().get(decision.router, (None, 0))
+        if median is not None and n >= int(getattr(config, "ESTIMATE_MIN_RUNS", 5)):
+            self.last_estimate, self.last_estimate_n = float(median), int(n)
+        else:
+            self.last_estimate_n = int(n)
+        return budget.estimate_line(self.last_estimate, self.last_estimate_n)
+
+    def _add_usage(self, usage: dict | None) -> None:
+        """Acumula un usage (agente o planner) en self.last_usage. Best-effort."""
+        if not usage or not usage.get("requests"):
+            return
+        self.last_usage["per_agent"].append(usage)
+        totals = self.last_usage["totals"]
+        for key in ("requests", "input_tokens", "output_tokens", "cache_creation_input_tokens",
+                    "cache_read_input_tokens", "cache_creation_5m", "cache_creation_1h"):
+            totals[key] = totals.get(key, 0) + (usage.get(key) or 0)
 
     @staticmethod
     def _empty_claims() -> dict:
@@ -478,6 +529,10 @@ class Orchestrator:
         started = perf_counter()
         try:
             return self._run(task, use_llm_planner, resume, forced_agent)
+        except budget.BudgetGate:
+            self.last_run_ok = False
+            self.last_exit_code = budget.EXIT_CODE
+            raise
         except BaseException:
             self.last_run_ok = False
             raise
@@ -546,6 +601,7 @@ class Orchestrator:
         except Exception:  # noqa: BLE001
             return {}
         metrics.write_run_record(record)
+        self.budget.after_run(record.get("cost_usd"), had_agent=bool(self.last_plan))
         return record
 
     def _apply_decision(self, decision: router.RouteDecision) -> None:
@@ -554,6 +610,10 @@ class Orchestrator:
         self.last_router = decision.router
         self.last_reason = decision.reason
         self.last_confidence = decision.confidence
+        # Tokens del planner LLM: parte del costo de la corrida (y del gasto de la sesión).
+        if decision.usage:
+            self._add_usage({"agent": "planner", **decision.usage})
+        estimate = self._estimate(decision)
         if self.trace is not None:
             self.trace.event(
                 "route",
@@ -568,9 +628,10 @@ class Orchestrator:
             )
         if self.quiet or os.getenv(QUIET_ENV):
             return
-        self._stderr.print(
-            router.describe(decision), markup=False, highlight=False, soft_wrap=True, style="dim"
-        )
+        line = router.describe(decision)
+        if estimate:
+            line += f" · {estimate}"
+        self._stderr.print(line, markup=False, highlight=False, soft_wrap=True, style="dim")
 
     def _run(
         self,
@@ -612,6 +673,13 @@ class Orchestrator:
                 self._record_turn(request, [], useful=False)
                 return decision.reply
 
+        # Freno de gasto: tope de sesión y ráfaga, antes del planner y de cualquier agente (las
+        # capas de $0 ya respondieron arriba). Levanta BudgetGate; quien llama decide.
+        if self._budget_active() and (
+            forced_agent or resuming or decision is None or decision.agents
+        ):
+            self.budget.before_agent()
+
         # Antes de una tarea: sesión AWS utilizable (solo Bedrock). Login solo si
         # el token venció; sin TTY o sin red devuelve el mensaje, sin esperar.
         if getattr(config, "USE_BEDROCK", False):
@@ -637,6 +705,11 @@ class Orchestrator:
             console.print(f"[dim]Reanudando run: {done}/{len(plan)} pasos ya completados.[/dim]")
         else:
             self.state.reset()
+            confirmed = False
+            if decision is None and self._confirmed and self._confirmed[0] == task:
+                # El dev ya aceptó el estimado de esta misma tarea: sin segunda llamada al planner.
+                decision = dataclasses.replace(self._confirmed[1], usage=None)
+                self._confirmed, confirmed = None, True
             if decision is None:  # capas 2 y 3: planner + reglas duras
                 decision = router.plan_decision(
                     request,
@@ -649,6 +722,12 @@ class Orchestrator:
             if decision.reply is not None:  # planner sin plan: pide precisar
                 self._record_turn(request, [], useful=False)
                 return decision.reply
+            if self._budget_active() and not confirmed and decision.agents:
+                try:
+                    self.budget.check_estimate(self.last_estimate, self.last_estimate_n)
+                except budget.BudgetGate:
+                    self._confirmed = (task, decision)
+                    raise
             if self.read_only and any(a not in router.READONLY_AGENTS for a in decision.agents):
                 self.last_run_ok = False
                 self.last_exit_code = 2

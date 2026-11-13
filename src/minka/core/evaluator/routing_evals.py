@@ -22,9 +22,17 @@ MAX_CASES = 12
 CASES_PATH = Path(__file__).resolve().parent.parent / "evals" / "routing_cases.json"
 
 
-def info_cases(path: Path = CASES_PATH, limit: int = MAX_CASES) -> list[dict]:
+def info_cases(
+    path: Path = CASES_PATH, limit: int = MAX_CASES, project_path: Path | None = None
+) -> list[dict]:
+    """Casos eval=info del paquete más, OPCIONALMENTE, los de projects/<p>/evals/routing_cases.json
+    (mismo formato; se ignora si no existe). Los del proyecto van después y comparten el tope."""
     cases = json.loads(path.read_text("utf-8"))["cases"]
-    return [c for c in cases if c.get("eval") == "info"][:limit]
+    out = [c for c in cases if c.get("eval") == "info"][:limit]
+    if project_path is not None and project_path.is_file():
+        extra = json.loads(project_path.read_text("utf-8")).get("cases") or []
+        out += [c for c in extra if c.get("eval") == "info"][:limit]
+    return out
 
 
 def _context(case: dict) -> str:

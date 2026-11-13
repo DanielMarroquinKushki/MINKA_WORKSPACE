@@ -12,6 +12,31 @@ Nada mueve la línea base de prompts (`prompt_hash`).
   citas repite el análisis sobre ese repo sin planner (confianza media, `repo <alias>` en la línea
   de decisión). Sin turno previo pide precisar; tras pr_review/development o sin citas va al planner.
 - 7 casos golden nuevos (60 en total) con `repos` por caso en `routing_cases.json`.
+- Medido una vez por par (`stats --source lote5_before/after`): seguimiento entre repos $0.284 → $0.078
+  (5 → 2 vueltas); `ka` con consulta simple $0.280 → $0.155 (36 → 12 líneas).
+- Tope de sesión y ráfaga (`core/orchestrator/budget.py`): `Orchestrator.session_usd` suma el costo
+  de cada corrida al cerrarla (planner e interrumpidas incluidos). Antes de lanzar un agente se
+  levanta `BudgetGate(kind, usd, n)` si la sesión alcanzó `SESSION_MAX_USD` (5.0) o si hay ráfaga
+  (`BURST_N`=3 corridas con agente seguidas a menos de `BURST_GAP_SECONDS`=5 s del fin de la
+  anterior). El orquestador no lee stdin: en el REPL con TTY `main.py` pregunta ("sí" sube el tope
+  un escalón o reinicia la ráfaga; "no" descarta); sin TTY o `MINKA_SOURCE=bridge`, línea y exit 3.
+  Las capas de $0 nunca frenan; `evals quality` y el bridge están exentos. `/status` muestra el $ de
+  la sesión. `DAILY_MAX_USD` (20) solo avisa en `stats` y `doctor` (sin `eval_quality`).
+- El costo del planner LLM ahora forma parte de `cost_usd` de la corrida (`per_agent` lleva una
+  entrada `planner`): las medianas de la ruta `llm` suben respecto al histórico.
+- Estimado previo: con router `llm` o plan de 2+ pasos la línea de decisión añade `estimado ~$X
+  (mediana de N corridas)` desde `metrics.route_median_counts` (mínimo `ESTIMATE_MIN_RUNS`=5; si no,
+  `sin estimado`). Confirmación (`BudgetGate` kind `estimado`) solo si supera `ESTIMATE_CONFIRM_USD`
+  (0.50) o rompería el tope; tras el "sí" se relanza reutilizando la decisión, sin segunda llamada
+  al planner.
+- `/mal [agente_esperado] [nota ≤80]` en el REPL: escribe `projects/<p>/evals/routing_feedback.jsonl`
+  (0600, carpeta 0700) con ts, run_id, project, router, reason, confidence, plan, pedido normalizado y
+  redactado (≤120 caracteres; si no, sha256), expected y note. Nunca respuestas, tools, historial ni
+  reasoning. `minka evals routing --from-feedback` genera `evals/routing_cases.draft.json` sin LLM;
+  `routing_evals.info_cases` lee además `projects/<p>/evals/routing_cases.json` si existe. Esos
+  archivos contienen texto de pedidos: no versionar.
+- Límites: freno, estimado y `/mal` probados solo sin red (agentes, planner, reloj y `Confirm.ask`
+  falsos); la pregunta en terminal real y el estimado con medianas reales no se ejecutaron.
 
 ## 0.2.2 — lote 6 (operación)
 

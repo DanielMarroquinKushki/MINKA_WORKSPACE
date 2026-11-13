@@ -43,13 +43,14 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Confirm
 from rich.table import Table
 from typer.core import TyperGroup
 
 from minka._app import PLAIN_ENV, QUIET_ENV, SOURCE_ENV
 from minka.config_loader import config
 from minka.core import metrics, render, trace_log
-from minka.core.orchestrator import router
+from minka.core.orchestrator import budget, router
 
 
 class _TaskOrCommandGroup(TyperGroup):
@@ -251,7 +252,51 @@ def _count_go_files(repo_path: str) -> int | None:
     return sum(1 for f in root.rglob("*.go") if "vendor" not in f.parts)
 
 
-def _print_status(turns: int) -> None:
+def _resolve_budget_gate(orchestrator, gate, tty: bool) -> bool:
+    """El orquestador frenó la corrida (tope, ráfaga o estimado). Con TTY pregunta: "sí" sube el
+    tope un escalón / reinicia la ráfaga / acepta el estimado y devuelve True (relanzar); "no"
+    descarta el pedido (False). Sin TTY o bridge: una línea y exit 3, sin preguntar."""
+    stderr_console.print(gate.line(), markup=False, highlight=False, soft_wrap=True)
+    if not tty or os.getenv(SOURCE_ENV) == "bridge":
+        stderr_console.print(
+            f"Sin terminal interactiva: corrida no lanzada (exit {budget.EXIT_CODE}). "
+            "Ajusta SESSION_MAX_USD / BURST_N / ESTIMATE_CONFIRM_USD o usa el REPL.",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+        raise typer.Exit(code=budget.EXIT_CODE)
+    if Confirm.ask(gate.question(), default=False):
+        console.print(f"[dim]{orchestrator.budget.allow(gate)}[/dim]")
+        return True
+    console.print("[dim]Pedido descartado.[/dim]")
+    return False
+
+
+def _mark_bad_routing(orchestrator, rest: str) -> None:
+    """Comando /mal — registra la última decisión del router como equivocada."""
+    from minka.core.evaluator import routing_feedback as rf
+
+    record = getattr(orchestrator, "last_run_record", None) or {}
+    turns = getattr(getattr(orchestrator, "memory", None), "turns", None) or []
+    if not record.get("run_id") or not turns:
+        console.print("[yellow]No hay una corrida previa en esta sesión que marcar.[/yellow]")
+        console.print(f"[dim]{rf.USAGE}[/dim]")
+        return
+    expected, note = rf.parse_command(rest)
+    try:
+        path = rf.write_feedback(config, record, turns[-1].request, expected, note)
+    except (OSError, ValueError) as exc:
+        console.print(f"[yellow]No se pudo registrar: {exc}[/yellow]")
+        return
+    console.print(
+        f"[dim]Registrado: {record.get('router')} → esperado "
+        f"{(expected or 'sin indicar').removesuffix('_agent')} en {path.name} (0600; contiene texto de "
+        f"tus pedidos: no versionar). `minka evals routing --from-feedback` genera el borrador.[/dim]"
+    )
+
+
+def _print_status(turns: int, session_usd: float = 0.0) -> None:
     """Comando /status — estado del sistema."""
     if getattr(config, "USE_BEDROCK", False):
         token = config.get_aws_session().sso_token_status()
@@ -278,6 +323,8 @@ def _print_status(turns: int) -> None:
         f" Backend    : {backend_line}",
         f" Repos Go   : {' | '.join(repo_parts)}",
         f" Memoria    : {turns} turnos en sesión",
+        f" Gasto      : ${session_usd:.2f} en la sesión (tope ${budget.session_max_usd():.2f}, "
+        f"ráfaga {budget.burst_n()} corridas a <{budget.burst_gap_seconds():g} s)",
         f" RAG        : {'activado' if config.RAG_ENABLED else 'desactivado (Nivel 4)'}",
         f" Nivel      : {config.AUTONOMY_LEVEL} — "
         + ("ApprovalGate activo" if config.AUTONOMY_LEVEL < 5 else "auto-aprobación"),
@@ -813,14 +860,21 @@ def main(
 
     if task:
         try:
-            result = orchestrator.run(
-                task,
-                use_llm_planner=not no_llm_planner,
-                forced_agent=agent,
-                # Con agente forzado se salta el planner: reanudar un run previo
-                # no aplica. Sin --agent se conserva el comportamiento de siempre.
-                resume=agent is None,
-            )
+            while True:
+                try:
+                    result = orchestrator.run(
+                        task,
+                        use_llm_planner=not no_llm_planner,
+                        forced_agent=agent,
+                        # Con agente forzado se salta el planner: reanudar un run previo
+                        # no aplica. Sin --agent se conserva el comportamiento de siempre.
+                        resume=agent is None,
+                    )
+                    break
+                except budget.BudgetGate as gate:
+                    # Freno de gasto: con TTY pregunta y relanza; si no, exit 3 (dentro del helper).
+                    if not _resolve_budget_gate(orchestrator, gate, _is_tty()):
+                        raise typer.Exit(code=budget.EXIT_CODE)
         except KeyboardInterrupt:
             console.print("\nSesión terminada. Hasta luego.")
             raise typer.Exit(code=130)
@@ -858,7 +912,7 @@ def main(
         reader = _make_reader()
         keys = " Enter envía; Alt+Enter, salto de línea." if reader.tty else ""
         console.print(
-            f"[dim]Escribe tu pedido en español.{keys} Comandos: /status, /clear, /detalle, salir.[/dim]\n"
+            f"[dim]Escribe tu pedido en español.{keys} Comandos: /status, /clear, /detalle, /mal, salir.[/dim]\n"
         )
         try:
             while True:
@@ -870,7 +924,10 @@ def main(
                 if low in ("salir", "exit", "quit"):
                     break
                 if low == "/status":
-                    _print_status(len(getattr(orchestrator, "memory", [])))
+                    _print_status(len(getattr(orchestrator, "memory", [])), getattr(orchestrator, "session_usd", 0.0))
+                    continue
+                if low == "/mal" or low.startswith("/mal "):
+                    _mark_bad_routing(orchestrator, user_input[4:])
                     continue
                 if low == "/clear":
                     orchestrator.clear_session()
@@ -882,17 +939,27 @@ def main(
                     continue
                 if low.startswith("/"):
                     console.print(
-                        "[yellow]Comando desconocido. Disponibles: /status, /clear, /detalle, salir.[/yellow]"
+                        "[yellow]Comando desconocido. Disponibles: /status, /clear, /detalle, /mal, salir.[/yellow]"
                     )
                     continue
                 # El historial vive en orchestrator.memory: aquí solo viaja el pedido crudo.
                 try:
-                    result = orchestrator.run(user_input, use_llm_planner=not no_llm_planner)
+                    while True:
+                        try:
+                            result = orchestrator.run(user_input, use_llm_planner=not no_llm_planner)
+                            break
+                        except budget.BudgetGate as gate:
+                            # Tope/ráfaga/estimado: "sí" relanza el mismo pedido; "no" lo descarta.
+                            if not _resolve_budget_gate(orchestrator, gate, reader.tty):
+                                result = None
+                                break
                 except _transient_errors() as exc:
                     from minka.core.agents.base_agent import describe_transient
 
                     console.print(describe_transient(exc), markup=False, highlight=False)
                     continue  # el REPL sigue vivo
+                if result is None:
+                    continue
                 console.print()
                 render.print_result(
                     result, console, render=render.should_render(quiet=quiet, plain=plain)
@@ -976,6 +1043,14 @@ def stats(
         f"{metrics.SCOPE_NOTE}",
         soft_wrap=True,
     )
+    # Tope diario: solo aviso (nunca bloquea), sobre el día y sin las corridas de eval_quality.
+    daily_max = float(getattr(config, "DAILY_MAX_USD", 0) or 0)
+    if not month and not source and daily_max > 0 and (agg["cost_usd"] or 0) >= daily_max:
+        console.print(
+            f"[yellow]⚠ aviso: el gasto del día {metrics.fmt_usd(agg['cost_usd'])} alcanza "
+            f"DAILY_MAX_USD ${daily_max:.2f} (informativo, no bloquea).[/yellow]",
+            soft_wrap=True,
+        )
 
     table = Table(show_edge=False, pad_edge=False)
     for col in ("agente", "corridas", "requests", "tokens", "cache", "$", "p90 $"):
@@ -1038,8 +1113,28 @@ app.add_typer(evals_app, name="evals")
 def evals_routing(
     runs: int = typer.Option(3, "--runs", min=1, max=5, help="Corridas por caso (máx 5)."),
     json_out: Path = typer.Option(None, "--json-out", help="Escribe el reporte completo en JSON."),
+    from_feedback: bool = typer.Option(
+        False,
+        "--from-feedback",
+        help="Sin LLM: convierte evals/routing_feedback.jsonl (/mal) en evals/routing_cases.draft.json para revisar a mano.",
+    ),
 ):
-    from minka.core.evaluator import routing_evals
+    from minka.core.evaluator import routing_evals, routing_feedback
+
+    if from_feedback:
+        try:
+            path, n, skipped = routing_feedback.draft_cases(config)
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]No se pudo generar el borrador: {exc}[/red]")
+            raise typer.Exit(code=1)
+        console.print(
+            f"Borrador: {path} · {n} caso(s)" + (f" · {skipped} omitido(s) sin texto (solo hash)" if skipped else "")
+        )
+        console.print(
+            "[dim]Revísalo a mano y mueve lo válido a evals/routing_cases.json del proyecto. "
+            "Ambos archivos contienen texto de tus pedidos: no versionar.[/dim]"
+        )
+        return
 
     _require_llm_backend()
     if getattr(config, "USE_BEDROCK", False):
@@ -1047,7 +1142,7 @@ def evals_routing(
         if not ok:
             console.print(msg, markup=False)
             raise typer.Exit(code=1)
-    cases = routing_evals.info_cases()
+    cases = routing_evals.info_cases(project_path=routing_feedback.project_cases_path(config))
     console.print(
         f"[dim]{len(cases)} casos × {runs} corridas, solo el planner "
         f"({config.MODELS.get('planner', '?')}); nunca agentes.[/dim]"

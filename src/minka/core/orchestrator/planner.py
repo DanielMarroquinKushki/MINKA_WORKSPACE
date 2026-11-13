@@ -40,6 +40,8 @@ class PlanResult:
     planner_error: dict | None = None
     reasoning: str | None = None
     retries: int = 0
+    usage: dict | None = None  # tokens del planner LLM (None con keywords)
+
 
 # Routing por intención (keywords). Orden importa: se evalúa de arriba a abajo.
 _ROUTING = [
@@ -197,11 +199,11 @@ def plan_with_router(task: str, use_llm: bool = True, context: str = "") -> Plan
         return PlanResult(_keyword_plan(task), "keyword")
     res = _llm_plan(task, context)
     if res.steps:
-        return PlanResult(res.steps, "llm", None, res.reasoning, res.retries)
+        return PlanResult(res.steps, "llm", None, res.reasoning, res.retries, res.usage)
     error = res.error or StructuredError("empty_plan", "", "el planner no devolvió pasos")
     if error.kind in ("empty_plan", "validation"):
-        return PlanResult([], "no_plan", error.as_dict(), res.reasoning, res.retries)
-    return PlanResult(_keyword_plan(task), "keyword", error.as_dict(), res.reasoning, res.retries)
+        return PlanResult([], "no_plan", error.as_dict(), res.reasoning, res.retries, res.usage)
+    return PlanResult(_keyword_plan(task), "keyword", error.as_dict(), res.reasoning, res.retries, res.usage)
 
 
 def make_plan(task: str, use_llm: bool = True) -> list[dict]:

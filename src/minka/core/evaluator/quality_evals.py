@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import statistics
 import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -404,17 +403,8 @@ def consolidate(case: EvalCase, runs: list[RunResult], repos: dict | None = None
 def route_medians(month: str | None = None, cfg=None) -> dict[str, float]:
     """Mediana real de costo por ruta en el mes (sin corridas de eval); defaults si no hay datos."""
     out = dict(DEFAULT_ROUTE_COST)
-    try:
-        records = [r for r in metrics.read_run_records(month=month or metrics.local_day("%Y-%m"), cfg=cfg)
-                   if r.get("ok") and r.get("source") not in metrics.EXCLUDED_SOURCES]
-    except Exception:  # noqa: BLE001
-        return out
-    by: dict[str, list[float]] = {}
-    for r in records:
-        by.setdefault(r.get("router") or "other", []).append(float(r.get("cost_usd") or 0))
-    for route, costs in by.items():
-        if costs:
-            out[route] = round(statistics.median(costs), 4)
+    for route, (median, _n) in metrics.route_median_counts(month, cfg).items():
+        out[route] = median
     return out
 
 

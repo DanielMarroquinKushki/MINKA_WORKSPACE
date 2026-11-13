@@ -31,10 +31,26 @@ Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
 - `minka stats [--day|--month] [--project] [--agent] [--source]`: tokens, cache, costo,
   rutas del router, cierres recortados, citas no encontradas y `prompt_hash` (línea base:
   sha256 de prompts + tools + MODELS; si aparece más de uno en el rango, las
-  comparaciones no son válidas).
+  comparaciones no son válidas). Si el gasto del día alcanza `DAILY_MAX_USD`, `stats` y
+  `doctor` avisan (informativo, nunca bloquea; excluye `eval_quality`).
+- **Freno de gasto** (`core/orchestrator/budget.py`, lote 5): antes de lanzar un agente el orquestador
+  levanta `BudgetGate` si la sesión alcanzó `SESSION_MAX_USD` (5.0; suma planner e interrumpidas) o
+  si hay ráfaga (`BURST_N`=3 corridas con agente seguidas a menos de `BURST_GAP_SECONDS`=5 s del fin
+  de la anterior). Las capas de $0 nunca frenan. REPL con TTY: pregunta; "sí" sube el tope otro
+  escalón o reinicia la ráfaga, "no" descarta el pedido. Sin TTY o `MINKA_SOURCE=bridge`: una línea
+  y exit 3. No aplica a `evals quality` ni al bridge. `/status` muestra el $ de la sesión.
+- **Estimado previo**: con router `llm` o plan de 2+ pasos la línea de decisión añade
+  `estimado ~$X (mediana de N corridas)` (mediana real de esa ruta en el mes, mínimo
+  `ESTIMATE_MIN_RUNS`=5; si no, `sin estimado`, nunca un rango inventado). Pide confirmación
+  (`BudgetGate` kind `estimado`) si supera `ESTIMATE_CONFIRM_USD` (0.50) o rompería el tope; tras un
+  "sí" se relanza sin segunda llamada al planner. `info_direct`, `inherit` y las capas de $0 no lo muestran.
 - `minka knowledge check --project P`: verifica las citas `archivo:línea` de
   `knowledge/extracted/` y del catálogo de riesgos contra REPOS (exit 1 si hay rotas).
-- `minka evals routing --runs N`: mide el planner (cuesta tokens).
+- `minka evals routing --runs N`: mide el planner (cuesta tokens) con los casos `eval=info` del
+  paquete más, si existe, `projects/<p>/evals/routing_cases.json`. `--from-feedback` (sin LLM)
+  convierte `evals/routing_feedback.jsonl` (lo que marcaste con `/mal`) en
+  `evals/routing_cases.draft.json` para revisar a mano. Ambos archivos contienen texto de tus
+  pedidos: no versionarlos.
 - `minka --version`: versión, commit y `requested_revision`; `minka trace [run_id|--last|--clear]`
   lee las trazas locales (solo existen con `TRACE_ENABLED` o `--trace`; ver `docs/OPERACION.md`).
 - Fallos de red/timeout/throttling/credenciales durante una corrida devuelven un **resultado
@@ -63,8 +79,9 @@ aws sso login --profile bedrock
 Luego: `minka`
 
 **Comandos disponibles dentro del chat:**
-- `/status`  → estado del sistema (sesión AWS, backend, repos, memoria, nivel)
+- `/status`  → estado del sistema (sesión AWS, backend, repos, memoria, $ de la sesión, nivel)
 - `/clear`   → limpia el historial de la sesión
+- `/mal [agente] [nota]` → marca la última decisión del router como equivocada (ver Freno de gasto arriba)
 - `salir`    → termina la sesión
 - Enter envía; Alt+Enter inserta un salto de línea (en Terminal/iTerm2 activar "Option as
   Meta"). Un pegado de `PASTE_COLLAPSE_LINES` (3) líneas o `PASTE_COLLAPSE_CHARS` (500)

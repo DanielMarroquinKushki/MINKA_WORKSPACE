@@ -68,8 +68,9 @@ siempre por confirmación humana (`core/orchestrator/approval_gate.py:1-4`).
 | `review_direct` | pide revisar y hay cambios o rama citada: pr_review sin planner (`router.py:272`) | agente |
 | `info_direct` | pregunta de información simple (sin verbo de escritura, fallo ni encadenado, y sin pedir reporte): architecture directo, perfil breve (`router.py:397`) | agente |
 | `inherit` | pedido ambiguo con turno previo útil: hereda ese agente (`router.py:420`) | agente |
+| `inherit_repo` | seguimiento corto cuya única referencia a código es un alias de `REPOS` ("¿y en el repo hsm?") tras una consulta útil de architecture con citas: repite el análisis sobre ese repo sin planner, confianza media (`router.is_repo_followup`) | agente |
 | `followup_change` | "arregla eso" tras una consulta con citas: development directo (`router.py:380`) | agente |
-| `forced` | `--agent` o bridge: salta el planner, perfil completo (`orchestrator.py:353`) | agente |
+| `forced` | `--agent` o bridge: salta el planner; perfil completo salvo consulta de información simple → breve, razón `override --agent · consulta breve` (`orchestrator._run_forced`) | agente |
 | `llm` | el planner decidió el plan (uno o varios pasos) (`router.py:521`) | planner + agentes |
 | `keyword` | planner por palabras clave (`--no-llm-planner` o LLM caído) | agentes |
 | `no_plan` | el planner no devolvió pasos válidos: pregunta de información → architecture; si no, pide precisar (`router.py:496-503`) | $0 o agente |
@@ -140,10 +141,10 @@ valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con
 
 | Comando / flag | Qué hace |
 |---|---|
-| `minka` | REPL. Comandos: `/status`, `/clear`, `/detalle [N]`, `salir` |
+| `minka` | REPL. Comandos: `/status` (incluye $ de la sesión), `/clear`, `/detalle [N]`, `/mal [agente] [nota]`, `salir` |
 | `minka "pedido"` | una consulta y sale |
 | `--project P` | proyecto activo (si no: directorio actual, luego `DEFAULT_PROJECT`) |
-| `--agent architecture\|report\|pr_review` | fuerza un agente de solo lectura y salta el planner |
+| `--agent architecture\|report\|pr_review` | fuerza un agente de solo lectura y salta el planner; con una consulta de información simple sale breve |
 | `--read-only` | si el router elige un agente que escribe, responde y sale con 2; implícito con `MINKA_SOURCE=bridge` |
 | `--completo` | respuesta completa, sin perfiles acotados ni investigación oculta |
 | `--debug` | muestra input y resultado de cada tool; también fuerza completo |
@@ -163,7 +164,9 @@ valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con
 | `--trace` / `TRACE_ENABLED` | traza local de la corrida en `output/trace/<día>/<run_id>.jsonl`; apagada por defecto |
 | `minka trace [run_id \| --last \| --clear]` | lista, lee o borra las trazas locales |
 | `minka stats [--day\|--month] [--project] [--agent] [--source]` | tokens, caché, costo, rutas, citas, afirmaciones, `prompt_hash` |
-| `minka evals routing [--runs 1-5] [--json-out]` | mide el planner con 53 casos (`core/evals/routing_cases.json`); cuesta tokens |
+| `minka evals routing [--runs 1-5] [--json-out] [--from-feedback]` | mide el planner con los casos `eval=info` de `core/evals/routing_cases.json` (60 casos golden en total) más `projects/<p>/evals/routing_cases.json` si existe; cuesta tokens. `--from-feedback` no llama al LLM: convierte `evals/routing_feedback.jsonl` (`/mal`) en `evals/routing_cases.draft.json` |
+| `minka stats` / `minka doctor` (tope diario) | si el gasto del día (sin `eval_quality`) alcanza `DAILY_MAX_USD` (20) avisan; nunca bloquean |
+| Freno de gasto (`SESSION_MAX_USD` 5.0, `BURST_N` 3, `BURST_GAP_SECONDS` 5, `ESTIMATE_CONFIRM_USD` 0.50, `ESTIMATE_MIN_RUNS` 5) | antes de lanzar un agente: tope de sesión (suma planner e interrumpidas), ráfaga (3 corridas con agente seguidas a <5 s del fin de la anterior) y estimado previo (router `llm` o 2+ pasos). REPL con TTY pregunta ("sí" sube un escalón / reinicia la ráfaga / acepta el estimado; "no" descarta); sin TTY o bridge: línea y exit 3. Las capas de $0, `evals quality` y el bridge no pasan por él |
 | `minka knowledge check [--project]` | citas del knowledge contra REPOS; exit 1 si hay rotas |
 | `minka knowledge init [--project] [--apply] [--yes]` | borrador determinista de knowledge; `--apply` nunca sobrescribe |
 | `minka knowledge scan [--project]` | secretos en `knowledge/` (ruta:línea y tipo, nunca el valor); `TEST_VALUES` y marcas `<!-- ejemplo -->` cuentan aparte; exit 1 con fallos |
@@ -255,9 +258,15 @@ valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con
   el 2026-11-05 y mitigado con la marca "(doc)" y el grep sin mayúsculas
   (`tests/test_hidden_investigation.py::test_identificador_solo_en_knowledge_se_marca_doc`). Mes: 16 sin
   respaldo de 193 comprobadas, 12 "(doc)".
-- Seguimiento entre repos cae al planner y cuesta más: $0.297 y $0.339 frente a ~$0.10 de una
-  simple (escaner_final B3, escaner_cierre C).
-- Delegación forzada (bridge, `--agent`) sin perfil breve: $0.352 (escaner_final B6).
+- Seguimiento entre repos caía al planner y costaba más: $0.297 y $0.339 frente a ~$0.10 de una
+  simple (escaner_final B3, escaner_cierre C). Lote 5: `inherit_repo` lo resuelve sin planner;
+  medido una vez: $0.078 y 2 vueltas frente a $0.284 y 5 vueltas (`stats --source lote5_after/before`).
+- Delegación forzada (bridge, `--agent`) sin perfil breve: $0.352 (escaner_final B6). Lote 5: con
+  consulta simple sale breve; medido una vez: $0.155 / 12 líneas frente a $0.280 / 36 líneas.
+- Freno de gasto y estimado previo (lote 5): probados solo con agentes, planner y reloj falsos; la
+  pregunta con TTY real y el estimado con medianas reales **no verificados** en uso. El costo del
+  planner ahora entra en `cost_usd` de la corrida: las medianas de la ruta `llm` suben respecto al
+  histórico anterior al lote 5.
 - Primera consulta del día con caché fría: $0.410 y cache 66 % frente a $0.105 caliente
   (escaner_cierre C, n=1).
 - Dos agentes seguidos repiten hallazgos: el plan architecture→report devolvía ambos textos; hoy se
@@ -307,6 +316,8 @@ valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con
 | Plan de 2 pasos (architecture → report) | $0.52 | 82 % | 1 | `stats --source decision_after` |
 | Pedidos tipo reporte sin perfil | $0.13 / $0.54 / $1.53 (este último, 3 agentes) | 90 % | 3 | `stats --source report_before` |
 | Delegación forzada (bridge) | $0.352 | — | 1 | escaner_final B6 |
+| `ka` con consulta simple: completo → breve (lote 5) | $0.280 → $0.155; 36 → 12 líneas; 6 → 4 vueltas | — | 1 + 1 | `stats --source lote5_before/after` |
+| "¿y en el repo hsm?" tras consulta: planner → `inherit_repo` (lote 5) | $0.284 → $0.078; 5 → 2 vueltas | — | 1 + 1 | `stats --source lote5_before/after` |
 | Mes completo del proyecto en uso | $26.92 en 135 corridas; p90 architecture $0.49 | 87 % | 135 | `stats --month` |
 
 Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la factura del proveedor.
@@ -347,6 +358,10 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
   red/timeout/throttling/credenciales, CI en GitHub Actions (no ejecutado aún: cuota de Actions en
   repo privado **no verificada**), `scripts/release.sh` / `rollback.sh` probados contra un repo
   temporal, `minka trace`, retención de `agent_runs.jsonl`, tamaños en `doctor`, `docs/OPERACION.md`.
+- Hechos en el lote 5 (sin publicar): `ka`/`--agent` breve con consulta simple, `inherit_repo`,
+  tope de sesión y ráfaga (`BudgetGate`, exit 3 sin TTY), estimado previo en la línea de decisión,
+  `/mal` + `evals routing --from-feedback`, aviso de tope diario en `stats`/`doctor`. Medición de
+  los dos primeros con una muestra por par (sección 9); el resto solo con pruebas sin red.
 - Ideas anotadas sin abrir: skills por proyecto, detección de contradicciones entre pasos de un plan.
 
 ## 12. Cómo usarlo bien
@@ -362,6 +377,10 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
 6. Arranca el día con la pregunta más simple: la primera consulta paga la caché fría.
 7. Mantén `active-context/<proyecto>.md` corto y sin secretos: viaja en cada consulta.
 8. Revisa `minka stats` al cerrar; si aparece más de un `prompt_hash`, las comparaciones de costo no valen.
+9. Si el router se equivocó, escribe `/mal architecture razón corta` justo después: queda en
+   `evals/routing_feedback.jsonl` (texto de tu pedido: no lo versiones) y `evals routing
+   --from-feedback` lo convierte en casos para revisar.
+10. Si aparece el freno de gasto, lee la línea: el "sí" sube el tope otro escalón para toda la sesión.
 
 ## Afirmaciones y evidencia
 

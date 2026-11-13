@@ -112,6 +112,8 @@ class RouteDecision:
     retries: int = 0
     # Texto que el orquestador añade a la tarea del agente (p.ej. qué repos revisar).
     task_suffix: str | None = None
+    # Tokens de la(s) llamada(s) al planner LLM: el orquestador los suma al costo de la corrida.
+    usage: dict | None = None
     # Reglas locales (capas 1 y 4) evaluadas y descartadas antes de esta decisión; solo informa
     # (`minka trace`), no cambia el routing.
     evaluated: list[str] = field(default_factory=list)
@@ -561,6 +563,7 @@ def plan_decision(
         "planner_error": result.planner_error,
         "reasoning": result.reasoning,
         "retries": result.retries,
+        "usage": result.usage,
         # Llegar al planner significa que ninguna regla local aplicó.
         "evaluated": list(LOCAL_RULES),
     }
