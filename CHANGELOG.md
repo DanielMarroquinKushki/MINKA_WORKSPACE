@@ -1,6 +1,6 @@
 # Cambios
 
-## Sin publicar — lote 5 (router)
+## 0.2.3 — lote 5 (router)
 
 Nada mueve la línea base de prompts (`prompt_hash`).
 
