@@ -14,8 +14,16 @@ trap 'rm -rf "$TMP"' EXIT
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; HOME_DIR="$TMP/home"; TOOLS="$TMP/tools"; BIN="$TMP/bin"
 mkdir -p "$REPO" "$HOME_DIR" "$TOOLS" "$BIN"
 
-# Clon del árbol de trabajo (seguidos + nuevos no ignorados), sin .git del origen.
-git -C "$ROOT" ls-files -z --cached --others --exclude-standard | tar --null -T - -cf - -C "$ROOT" | tar -C "$REPO" -xf -
+# Clon del árbol de trabajo (seguidos + nuevos no ignorados), sin .git del origen. Portable entre
+# GNU tar y bsdtar: todas las opciones antes de cualquier operando (GNU tar ignora un -C posterior a
+# -T), las rutas se leen desde $ROOT con un cd, y se saltan los archivos seguidos pero borrados del
+# árbol (p.ej. uv.lock en el job sin lock), que harían fallar a tar.
+(
+  cd "$ROOT" \
+    && git ls-files -z --cached --others --exclude-standard \
+    | while IFS= read -r -d '' f; do if [[ -e "$f" ]]; then printf '%s\0' "$f"; fi; done \
+    | tar -c -f - --null -T -
+) | tar -x -f - -C "$REPO"
 git -C "$REPO" init -q -b main
 git -C "$REPO" config user.email "ci@example.com"
 git -C "$REPO" config user.name "ci"

@@ -7,7 +7,8 @@
 #
 # --dry-run: corre las verificaciones y el build; no crea el tag ni instala. Un tag ya
 #            existente solo avisa (sirve para el CI).
-# Variables: RELEASE_SKIP_GH=1 salta la consulta del CI con `gh` (lectura).
+# Variables: RELEASE_SKIP_GH=1 salta la consulta del CI (solo para tests y el propio CI, donde
+#            `gh` no tiene sesión); en una publicación real no se usa.
 set -euo pipefail
 
 DIST_NAME="minka-workspace"
@@ -60,23 +61,20 @@ command -v uv >/dev/null || die "uv no está en PATH"
 uv lock --check --no-progress >/dev/null 2>&1 || die "uv.lock no corresponde a pyproject.toml (uv lock --check)"
 ok "uv lock --check"
 
-# 6. CI del commit (solo lectura; si no hay gh, avisa y sigue)
+# 6. CI del commit (scripts/ci_status.sh, solo lectura): el ÚLTIMO run manda. failure/cancelled →
+#    error; sin runs, en curso o sin gh → aviso y se sigue.
 if [[ "${RELEASE_SKIP_GH:-}" == "1" ]]; then
-  warn "RELEASE_SKIP_GH=1: no se consultó el CI"
-elif command -v gh >/dev/null; then
-  if RUNS="$(gh run list --commit "$HEAD_SHA" --json status,conclusion --limit 20 2>/dev/null)"; then
-    if echo "$RUNS" | grep -q '"conclusion":"failure"'; then
-      die "el CI del commit ${HEAD_SHA:0:12} tiene corridas en rojo"
-    elif echo "$RUNS" | grep -q '"conclusion":"success"'; then
-      ok "CI del commit ${HEAD_SHA:0:12} en verde"
-    else
-      warn "sin corridas concluidas del CI para ${HEAD_SHA:0:12} (pendiente o sin subir)"
-    fi
-  else
-    warn "gh no pudo consultar el CI (sin sesión o sin remoto); se sigue"
-  fi
+  warn "RELEASE_SKIP_GH=1: no se consultó el CI (solo para tests/CI)"
 else
-  warn "gh no está instalado: CI no verificado"
+  set +e
+  CI_MSG="$(bash "$ROOT/scripts/ci_status.sh" "$HEAD_SHA")"
+  CI_EXIT=$?
+  set -e
+  case "$CI_EXIT" in
+    0) ok "$CI_MSG" ;;
+    1) die "$CI_MSG" ;;
+    *) warn "$CI_MSG; se sigue" ;;
+  esac
 fi
 
 # 7. build
