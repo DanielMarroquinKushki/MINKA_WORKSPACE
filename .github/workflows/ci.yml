@@ -61,6 +61,7 @@ jobs:
           ALLOW_TESTS = {
               "tests/test_backend.py",
               "tests/test_hidden_investigation.py",
+              "tests/test_lote6b_trace_retencion.py",
               "tests/test_lote3_verificador.py",
               "tests/test_knowledge_init.py",
               "tests/test_repl_input.py",
