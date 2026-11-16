@@ -68,6 +68,7 @@ class Citation:
     resolved: str = ""  # ruta relativa al repo que la contiene, como "repo/ruta"
     candidates: list[str] = field(default_factory=list)
     note: str = ""
+    distance: int | None = None  # simbolo_movido: líneas entre la citada y la más cercana con el símbolo
 
     @property
     def broken(self) -> bool:
@@ -267,11 +268,28 @@ def _symbols_on_line(text: str) -> list[str]:
     return names
 
 
-def _check_symbols(citation: Citation, source_lines: list[str], md_text: str) -> None:
-    """Aviso de símbolo movido/ausente solo con nombre exacto (identificador en backticks)."""
+def symbols_for_citation(text: str) -> list[str]:
+    """Identificadores en backticks de la línea que valen como símbolo de la cita: con mayúscula,
+    `_` o `.` (`ResolveToken`, `pkg.Func`, `max_retries`); una palabra en minúscula suelta
+    (`token`, `timeout`) no cuenta: casi siempre es prosa o un campo, no el símbolo citado."""
+    names = []
+    for raw in BACKTICK_SYMBOL_RE.findall(text):
+        if not re.search(r"[A-Z_.]", raw):
+            continue
+        name = raw.split(".")[-1]
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _check_symbols(
+    citation: Citation, source_lines: list[str], md_text: str, symbols: list[str] | None = None
+) -> None:
+    """Aviso de símbolo movido/ausente solo con nombre exacto (identificador en backticks).
+    `symbols` permite pasar la lista ya filtrada (citation_check); por defecto, todos los de la línea."""
     if citation.line is None:
         return
-    symbols = _symbols_on_line(md_text)
+    symbols = _symbols_on_line(md_text) if symbols is None else symbols
     if not symbols:
         return
     start = max(0, citation.line - 1 - SYMBOL_WINDOW)
@@ -287,7 +305,9 @@ def _check_symbols(citation: Citation, source_lines: list[str], md_text: str) ->
         hits = [i for i, line in enumerate(source_lines, 1) if pattern.search(line)]
         if hits:
             citation.status = STATUS_SYMBOL_MOVED
-            citation.note = f"{name} ahora en línea {hits[0]}"
+            nearest = min(hits, key=lambda i: abs(i - citation.line))
+            citation.note = f"{name} ahora en línea {nearest}"
+            citation.distance = abs(nearest - citation.line)
             return
     citation.status = STATUS_SYMBOL_ABSENT
     citation.note = f"{symbols[0]} no aparece en el archivo"

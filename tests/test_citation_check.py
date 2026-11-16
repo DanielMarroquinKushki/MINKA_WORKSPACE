@@ -45,7 +45,8 @@ def test_anota_inexistente_y_fuera_de_rango(index):
         "también service/token.go:900 ⚠ línea fuera de rango."
     )
     assert (r.total, r.missing) == (3, 2)
-    assert r.summary == "3 citas verificadas, 2 no encontradas"
+    assert r.summary == "3 citas verificadas, 2 no encontradas · símbolo: ok 1, lejano 0, ausente 0"
+    assert (r.ok, r.symbol_far, r.symbol_absent) == (1, 0, 0)
 
 
 def test_marcador_fuera_del_backtick(index):

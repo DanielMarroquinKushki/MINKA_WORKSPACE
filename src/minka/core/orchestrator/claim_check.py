@@ -34,6 +34,12 @@ MARK_NO_SOURCE = "⚠ sin fuente"  # duración/plazo que no está en los repos n
 MARK_DOC_ONLY = "(solo knowledge"  # duración que solo aparece en knowledge/extracted|learning
 MARK_DOC_RISK = "(doc: risk_catalog.md)"
 MARK_RISK_MISSING = "⚠ id inexistente en el catálogo"
+MARK_STALE = "(entrada del {date}; verifica en el código)"
+MARK_DOC_CONTEXT = "(doc: {source})"  # session_log / decisions_log, entrada reciente
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ENTRY_DATE_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2})\b")
+_FIELD_DATE_RE = re.compile(r"^\*\*Fecha:\*\*\s*(\d{4}-\d{2}-\d{2})\b")
+CONTEXT_FILES = ("team/session_log.md", "team/decisions_log.md")
 _REUNION_RE = re.compile(r"reuni[oó]n", re.IGNORECASE)
 
 MAX_TOKENS_CHECKED = 120  # tope de consultas a los repos por respuesta
@@ -78,7 +84,8 @@ _NUMBER_RES = (
 # Marcas que añade este verificador al final de la línea; `strip_marks` las quita (evals quality).
 _MARKS_RE = re.compile(
     r"\s*(?:" + "|".join(re.escape(m) for m in (MARK_NO_SOURCE, MARK_RISK_MISSING, MARK_UNSUPPORTED, MARK_INCONSISTENT))
-    + r")[^\n]*|\s*\((?:solo knowledge|doc|inferido sin herramienta|depende de runtime)[^)\n]*\)"
+    + r")[^\n]*|\s*\((?:solo knowledge|doc|inferido sin herramienta|depende de runtime|entrada del)[^)\n]*\)"
+    + r"|\s*⚠ símbolo (?:a \d+ líneas|no está en el archivo)"
 )
 
 
@@ -110,6 +117,8 @@ class ClaimResult:
     durations_checked: int = 0  # plazos/duraciones: código, solo knowledge o sin fuente
     durations_doc_only: int = 0
     durations_unsupported: int = 0
+    context_dates: int = 0  # fechas/ADR respaldados por session_log o decisions_log
+    context_stale: int = 0  # de esos, con más de CONTEXT_STALE_DAYS
     unsupported_tokens: list[str] = field(default_factory=list)
 
     @property
@@ -214,6 +223,39 @@ def load_project_docs(
     return out
 
 
+def load_context_dates(knowledge_dir: Path | None) -> dict[str, str]:
+    """{fecha ISO: "session_log"|"decisions_log"} de las entradas `## YYYY-MM-DD` y `**Fecha:**` de
+    knowledge/team/. SOLO evidencia del verificador: no se inyecta al modelo ni al knowledge."""
+    out: dict[str, str] = {}
+    if knowledge_dir is None:
+        return out
+    for rel in CONTEXT_FILES:
+        f = Path(knowledge_dir) / rel
+        if not f.is_file():
+            continue
+        source = f.stem
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            m = _ENTRY_DATE_RE.match(line) or _FIELD_DATE_RE.match(line.strip())
+            if m:
+                out.setdefault(m.group(1), source)
+    return out
+
+
+def _stale(date_iso: str, today: str) -> bool | None:
+    """True si la fecha tiene más de CONTEXT_STALE_DAYS respecto a `today`; None si no se puede comparar."""
+    try:
+        from minka.config_loader import config
+
+        limit = int(getattr(config, "CONTEXT_STALE_DAYS", 30))
+        return (date.fromisoformat(today) - date.fromisoformat(date_iso)).days > limit
+    except (ValueError, TypeError):
+        return None
+
+
 def load_risk_ids(knowledge_dir: Path | None) -> set[str] | None:
     """Ids R-nn de los risk_catalog.md bajo knowledge/; None si el proyecto no tiene catálogo
     (entonces no se marca nada)."""
@@ -284,6 +326,7 @@ def verify(
     question: str | None = None,
     risk_ids: set[str] | None = None,
     run_id: str | None = None,
+    context_dates: dict[str, str] | None = None,
 ) -> ClaimResult:
     """Texto anotado + contadores. Sin texto devuelve el mismo texto. `decisions`: id → fecha del
     historial del proyecto. `tool_names`: nombres de tools del motor (no se verifican en repos);
@@ -297,7 +340,13 @@ def verify(
     evidence.tool_names = tool_names or frozenset()
     evidence.tools_used = tools_used
     evidence.risk_ids = risk_ids
+    # Fechas del contexto del proyecto: session_log/decisions_log (índice) más las de los ADR conocidos.
+    evidence.context_dates = dict(context_dates or {})
+    for adr_date in (decisions or {}).values():
+        if adr_date:
+            evidence.context_dates.setdefault(adr_date, "decisions_log")
     today = today or date.today().isoformat()
+    evidence.today = today
     lines = text.split("\n")
     out: list[str] = []
     in_fence = False
@@ -445,6 +494,12 @@ def _annotate_decisions(line: str, evidence: Evidence, result: ClaimResult) -> s
     out = line.rstrip()
     if found:
         out = f"{out} {MARK_DOC_DECISION}"
+        today = getattr(evidence, "today", None) or date.today().isoformat()
+        for adr, ref_date in refs:
+            adr_date = known.get(adr)
+            if adr in known and adr_date and _stale(adr_date, today) and MARK_STALE.format(date=adr_date) not in out:
+                result.context_stale += 1
+                out = f"{out} {MARK_STALE.format(date=adr_date)}"
     if missing:
         result.decisions_unsupported += len(missing)
         result.unsupported_tokens.extend(missing)
@@ -506,8 +561,11 @@ def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: st
         elif kind == SUPPORT_DOC:
             doc_only.append(token)
     masked = _BACKTICK_RE.sub(lambda m: " " * len(m.group(0)), line)
+    # `ADR-nnn (fecha)` lo comprueba _annotate_decisions con id y fecha: su fecha no se cuenta aquí.
+    masked = _ADR_REF_RE.sub(lambda m: " " * len(m.group(0)), masked)
     no_source: list[str] = []  # duraciones sin fuente
     doc_durations: list[str] = []  # duraciones solo en knowledge, con archivo:línea
+    context_marks: list[str] = []  # fechas del session_log/decisions_log (recientes o viejas)
     skip_durations = bool(_REUNION_RE.search(line))  # "la reunión de 30 min" no es un plazo del código
     for number_kind, token in _numbers_with_kind(masked, today):
         if number_kind == "plazo":
@@ -528,15 +586,28 @@ def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: st
                 result.numbers_checked += 1  # (código): sin marca
             continue
         result.numbers_checked += 1
+        if number_kind == "fecha" and token in getattr(evidence, "context_dates", {}):
+            # Fecha de una entrada del session_log/decisions_log: respaldada por el contexto del
+            # proyecto (antes salía "sin respaldo"); si es vieja, pide verificar en el código.
+            result.context_dates += 1
+            if _stale(token, today):
+                result.context_stale += 1
+                context_marks.append(MARK_STALE.format(date=token))
+            else:
+                context_marks.append(MARK_DOC_CONTEXT.format(source=evidence.context_dates[token]))
+            continue
         kind = evidence.support(token)
         if kind is None:
             result.numbers_unsupported += 1
             missing.append(token)
         elif kind == SUPPORT_DOC:
             doc_only.append(token)
-    if not missing and not doc_only and not inferred and not runtime and not no_source and not doc_durations:
+    if not (missing or doc_only or inferred or runtime or no_source or doc_durations or context_marks):
         return line
     out = line.rstrip()
+    for mark in dict.fromkeys(context_marks):
+        if mark not in out:
+            out = f"{out} {mark}"
     if doc_durations:
         out = f"{out} {MARK_DOC_ONLY}: {'; '.join(dict.fromkeys(doc_durations))})"
     if no_source:

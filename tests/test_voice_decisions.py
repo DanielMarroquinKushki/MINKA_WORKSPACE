@@ -177,9 +177,10 @@ def test_referencias_adr_existentes_e_inexistentes(tmp_path):
     text = ("Según ADR-001 (2026-10-01) se rota en logon.\n"
             "ADR-002 quedó reemplazada; ADR-099 no existe.\n"
             "ADR-003 (2026-01-01) trae fecha equivocada.")
-    r = cc.verify(text, RepoIndex({}), previous=[], decisions=known)
+    # today fijo: con CONTEXT_STALE_DAYS la fecha del ADR-001 añadiría "(entrada del …)" pasado un mes.
+    r = cc.verify(text, RepoIndex({}), previous=[], decisions=known, today="2026-10-05")
     lines = r.text.split("\n")
-    assert lines[0].endswith(cc.MARK_DOC_DECISION)
+    assert lines[0].endswith(cc.MARK_DOC_DECISION) and cc.MARK_UNSUPPORTED not in lines[0]
     assert cc.MARK_DOC_DECISION in lines[1] and lines[1].endswith(f"{cc.MARK_UNSUPPORTED}: ADR-099")
     assert lines[2].endswith(f"{cc.MARK_UNSUPPORTED}: ADR-003 (2026-01-01)")
     assert (r.decisions_checked, r.decisions_unsupported) == (4, 2)

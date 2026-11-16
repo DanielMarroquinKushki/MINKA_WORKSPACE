@@ -146,6 +146,10 @@ LIVE_CONTEXT_ENABLED = os.getenv("LIVE_CONTEXT_ENABLED", "true").strip().lower()
 LIVE_CONTEXT_MAX_LINES = int(os.getenv("LIVE_CONTEXT_MAX_LINES", "60"))
 LIVE_CONTEXT_MAX_TOKENS = int(os.getenv("LIVE_CONTEXT_MAX_TOKENS", "750"))
 LIVE_CONTEXT_STALE_DAYS = int(os.getenv("LIVE_CONTEXT_STALE_DAYS", "7"))
+# Verificador: una fecha o ADR del session_log/decisions_log citada en la respuesta con más de estos
+# días lleva "(entrada del <fecha>; verifica en el código)". Esos archivos son solo evidencia del
+# verificador: nunca van al prompt ni a AGENT_KNOWLEDGE.
+CONTEXT_STALE_DAYS = int(os.getenv("CONTEXT_STALE_DAYS", "30"))
 # Verificación de citas archivo:línea de la respuesta contra REPOS
 # (core/orchestrator/citation_check.py): anota "⚠ no existe" y cuenta en métricas.
 CITATION_CHECK_ENABLED = os.getenv("CITATION_CHECK_ENABLED", "true").strip().lower() in (

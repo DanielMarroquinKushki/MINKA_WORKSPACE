@@ -35,6 +35,7 @@ from minka.core.orchestrator import (
 from minka.core.orchestrator.state_manager import StateManager
 from minka.core.schemas import ReviewDecision
 from minka.core.tools.analysis.citations import RepoIndex
+from minka.core.tools.git import branches as repo_branches
 
 console = Console()
 
@@ -99,6 +100,12 @@ class Orchestrator:
         self._repo_index: RepoIndex | None = None
         self._repo_index_key: tuple | None = None
         self.last_citations_total: int = 0
+        self.last_citations_ok: int = 0
+        self.last_citations_symbol_far: int = 0
+        self.last_citations_symbol_absent: int = 0
+        # Ramas de REPOS (tools/git/branches.py): foto por sesión, refrescada al inicio de cada
+        # corrida; solo para /status, el resumen (stderr) y la nota "Búsqueda sobre:". Nunca al modelo.
+        self.branches: repo_branches.RepoBranches | None = None
         self.last_response_lines: int = 0
         self.last_claims: dict = self._empty_claims()
         # Planes de 2+ pasos: con hide_investigation se muestra solo el último paso y los
@@ -113,6 +120,7 @@ class Orchestrator:
         self.last_investigation_line: str | None = None
         self._docs_cache: tuple[str | None, list] | None = None
         self._risk_ids_cache: tuple[str | None, set[str] | None] | None = None
+        self._context_dates_cache: tuple[str | None, dict[str, str]] | None = None
         self.last_citations_missing: int = 0
         # Freno de gasto (budget.py): gasto de la sesión, ráfaga y estimado previo. El reloj se
         # inyecta en tests (`self.budget.clock`); las medianas por ruta se leen una vez por sesión.
@@ -200,6 +208,7 @@ class Orchestrator:
                 question=request,
                 risk_ids=self._risk_ids(),
                 run_id=self.last_run_id,
+                context_dates=self._context_dates(),
             )
         except Exception:  # noqa: BLE001 — el verificador nunca rompe la respuesta
             return result
@@ -290,6 +299,27 @@ class Orchestrator:
             self._docs_cache = (project, claim_check.load_project_docs(base))
         return self._docs_cache[1]
 
+    def _context_dates(self) -> dict[str, str]:
+        """Fechas de team/session_log.md y team/decisions_log.md, solo como evidencia del verificador."""
+        project = getattr(config, "ACTIVE_PROJECT", None)
+        if self._context_dates_cache is None or self._context_dates_cache[0] != project:
+            base = config.PROJECTS_DIR / project / "knowledge" if project else None
+            self._context_dates_cache = (project, claim_check.load_context_dates(base))
+        return self._context_dates_cache[1]
+
+    def refresh_branches(self) -> repo_branches.RepoBranches:
+        """Foto de ramas de REPOS (git de solo lectura, sin red); se renueva una vez por corrida."""
+        self.branches = repo_branches.RepoBranches(getattr(config, "REPOS", {}) or {})
+        return self.branches
+
+    def _with_branch_note(self, text: str) -> str:
+        """Solo para mostrar: si la respuesta niega algo y algún repo no está en su base, dice sobre
+        qué ramas se buscó. No va a la memoria ni al modelo."""
+        if not text or self.branches is None or not repo_branches.mentions_absence(text):
+            return text
+        note = self.branches.search_note()
+        return f"{text.rstrip()}\n\n_{note}_" if note else text
+
     def _risk_ids(self) -> set[str] | None:
         """Ids R-nn del risk_catalog.md del proyecto (None si no hay catálogo); una lectura por proyecto."""
         project = getattr(config, "ACTIVE_PROJECT", None)
@@ -354,6 +384,9 @@ class Orchestrator:
             result = checked.text
             self.last_citations_total += checked.total
             self.last_citations_missing += checked.missing
+            self.last_citations_ok += checked.ok
+            self.last_citations_symbol_far += checked.symbol_far
+            self.last_citations_symbol_absent += checked.symbol_absent
         self.last_response_lines = len(result.splitlines()) if result else 0
         self.memory.add(request, agents, result, useful)
         return result
@@ -501,8 +534,8 @@ class Orchestrator:
         self._record_usage(agent)
         useful = router.is_useful_result(result) and not self._agent_failed(agent)
         result = self._record_turn(request, [name], useful, result)
-        # Solo para mostrar (perfil breve): no va a la memoria ni al modelo; nada en un fallo.
-        return response_profile.with_bounded_note(result, self.last_profile) if useful else result
+        # Solo para mostrar (perfil breve, ramas): no va a la memoria ni al modelo; nada en un fallo.
+        return response_profile.with_bounded_note(self._with_branch_note(result), self.last_profile) if useful else result
 
     def _agent_failed(self, agent) -> bool:
         """Corrida interrumpida (parcial) o respuesta vacía: el turno no es útil y la corrida no es ok."""
@@ -537,6 +570,9 @@ class Orchestrator:
         self.last_closings_removed = 0
         self.last_citations_total = 0
         self.last_citations_missing = 0
+        self.last_citations_ok = 0
+        self.last_citations_symbol_far = 0
+        self.last_citations_symbol_absent = 0
         self.last_response_lines = 0
         self.last_claims = self._empty_claims()
         self.last_investigation_line = None
@@ -608,6 +644,9 @@ class Orchestrator:
                 closings_removed=self.last_closings_removed,
                 citations_total=self.last_citations_total,
                 citations_missing=self.last_citations_missing,
+                citations_ok=self.last_citations_ok,
+                citations_symbol_far=self.last_citations_symbol_far,
+                citations_symbol_absent=self.last_citations_symbol_absent,
                 prompt_hash=self._prompt_hash(),
                 response_lines=self.last_response_lines,
                 claims=self.last_claims,
@@ -657,6 +696,7 @@ class Orchestrator:
         # El historial que antepone main.py no se enruta: solo el pedido actual.
         context, request = router.split_request(task)
         repos = getattr(config, "REPOS", {})
+        self.refresh_branches()
 
         # Un run interrumpido de la MISMA tarea se reanuda tal cual, sin re-enrutar.
         saved = self._load_state() if (resume and not forced_agent) else None
@@ -852,8 +892,8 @@ class Orchestrator:
         # Plan de 2+ pasos con TTY: solo se muestra el último paso; lo demás queda en /detalle.
         if len(plan) > 1 and self.hide_investigation:
             final = self._hide_steps(final, plan, request)
-        # La nota "respuesta acotada" es solo para mostrar: no va a la memoria ni al modelo.
-        final = response_profile.with_bounded_note(final, self.last_profile)
+        # Las notas "Búsqueda sobre:" y "respuesta acotada" son solo para mostrar: no van a la memoria ni al modelo.
+        final = response_profile.with_bounded_note(self._with_branch_note(final), self.last_profile)
 
         if getattr(config, "META_AGENT_ENABLED", False) and len(self.state.steps) >= 5:
             console.print(

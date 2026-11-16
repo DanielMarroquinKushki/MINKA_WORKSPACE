@@ -296,7 +296,7 @@ def _mark_bad_routing(orchestrator, rest: str) -> None:
     )
 
 
-def _print_status(turns: int, session_usd: float = 0.0) -> None:
+def _print_status(turns: int, session_usd: float = 0.0, branches: str = "") -> None:
     """Comando /status — estado del sistema."""
     if getattr(config, "USE_BEDROCK", False):
         token = config.get_aws_session().sso_token_status()
@@ -322,6 +322,7 @@ def _print_status(turns: int, session_usd: float = 0.0) -> None:
         f" Sesión AWS : {aws_line}",
         f" Backend    : {backend_line}",
         f" Repos Go   : {' | '.join(repo_parts)}",
+        f" Ramas      : {branches or '—'}",
         f" Memoria    : {turns} turnos en sesión",
         f" Gasto      : ${session_usd:.2f} en la sesión (tope ${budget.session_max_usd():.2f}, "
         f"ráfaga {budget.burst_n()} corridas a <{budget.burst_gap_seconds():g} s)",
@@ -566,11 +567,16 @@ def _print_run_summary(orchestrator, quiet: bool) -> None:
         if record.get("citations_total"):
             stderr_console.print(
                 f"{record['citations_total']} citas verificadas, "
-                f"{record.get('citations_missing') or 0} no encontradas",
+                f"{record.get('citations_missing') or 0} no encontradas · símbolo: ok {record.get('citations_ok') or 0}, "
+                f"lejano {record.get('citations_symbol_far') or 0}, ausente {record.get('citations_symbol_absent') or 0}",
                 markup=False,
                 highlight=False,
                 style="dim",
             )
+        # Ramas de REPOS fuera de su base (git local, sin red): sobre qué se buscó.
+        branches = getattr(orchestrator, "branches", None)
+        if branches is not None and branches.off_base():
+            stderr_console.print(f"ramas: {branches.status_line()}", markup=False, highlight=False, style="dim")
 
 
 @app.callback()
@@ -924,7 +930,12 @@ def main(
                 if low in ("salir", "exit", "quit"):
                     break
                 if low == "/status":
-                    _print_status(len(getattr(orchestrator, "memory", [])), getattr(orchestrator, "session_usd", 0.0))
+                    branches = orchestrator.refresh_branches() if hasattr(orchestrator, "refresh_branches") else None
+                    _print_status(
+                        len(getattr(orchestrator, "memory", [])),
+                        getattr(orchestrator, "session_usd", 0.0),
+                        branches.status_line() if branches is not None else "",
+                    )
                     continue
                 if low == "/mal" or low.startswith("/mal "):
                     _mark_bad_routing(orchestrator, user_input[4:])
@@ -1083,7 +1094,8 @@ def stats(
         f"{agg['repeated_tool_calls']}     vueltas con tope: {agg['iterations_capped']}     "
         f"cierres recortados: {agg['closings_removed']} "
         f"({agg['ends_with_offer']} respuestas con oferta)     citas no encontradas: "
-        f"{agg['citations_missing']}/{agg['citations_total']}     afirmaciones sin respaldo: "
+        f"{agg['citations_missing']}/{agg['citations_total']} · símbolo ok {agg['citations_ok']}, "
+        f"lejano {agg['citations_symbol_far']}, ausente {agg['citations_symbol_absent']}     afirmaciones sin respaldo: "
         f"{agg['claims_unsupported']}/{agg['claims_checked']} (doc {agg['claims_doc']}, "
         f"bloques propuestos {agg['blocks_proposed']})"
         f"     salidas cortadas: {agg['truncated_outputs']}"
@@ -1093,7 +1105,8 @@ def stats(
         f"{agg['decisions_unsupported']}     inferidas sin herramienta: {agg['claims_inferred']} · "
         f"inconsistentes: {agg['claims_inconsistent']} · riesgos sin catálogo: {agg['risks_unsupported']}     "
         f"interrumpidas: {agg['interrupted']} · "
-        f"respuestas vacías: {agg['empty_responses']}[/dim]"
+        f"respuestas vacías: {agg['empty_responses']}[/dim]",
+        soft_wrap=True,  # una sola línea lógica: sin cortes a mitad de un contador
     )
     hashes = agg.get("prompt_hashes") or {}
     if hashes:

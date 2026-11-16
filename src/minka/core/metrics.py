@@ -80,6 +80,9 @@ def build_run_record(
     closings_removed: int = 0,
     citations_total: int = 0,
     citations_missing: int = 0,
+    citations_ok: int = 0,
+    citations_symbol_far: int = 0,
+    citations_symbol_absent: int = 0,
     prompt_hash: str | None = None,
     response_lines: int = 0,
     claims: dict | None = None,
@@ -123,6 +126,10 @@ def build_run_record(
         # Citas archivo:línea de la respuesta verificadas contra REPOS (citation_check.py).
         "citations_total": int(citations_total),
         "citations_missing": int(citations_missing),
+        # Paso 12: cita resuelta con el símbolo cerca (ok), en otra parte del archivo o ausente.
+        "citations_ok": int(citations_ok),
+        "citations_symbol_far": int(citations_symbol_far),
+        "citations_symbol_absent": int(citations_symbol_absent),
         # Líneas de la respuesta mostrada (número, nunca el texto).
         "response_lines": int(response_lines),
         # Verificador de afirmaciones (claim_check.py): comprobadas, sin respaldo, bloques
@@ -254,7 +261,7 @@ def aggregate(
     security_excluded = decisions_used = decisions_unsupported = claims_inferred = claims_inconsistent = 0
     interrupted = empty_responses = risks_unsupported = 0
     redactions: Counter = Counter()
-    offers = closings = cit_total = cit_missing = 0
+    offers = closings = cit_total = cit_missing = cit_ok = cit_far = cit_absent = 0
     routers: Counter = Counter()
     prompt_hashes: Counter = Counter()
     for r in records:
@@ -280,6 +287,9 @@ def aggregate(
         closings += r.get("closings_removed") or 0
         cit_total += r.get("citations_total") or 0
         cit_missing += r.get("citations_missing") or 0
+        cit_ok += r.get("citations_ok") or 0
+        cit_far += r.get("citations_symbol_far") or 0
+        cit_absent += r.get("citations_symbol_absent") or 0
         for u in r.get("per_agent", []):
             name = _short(u.get("agent"))
             if agent and name != agent:
@@ -340,6 +350,9 @@ def aggregate(
         "closings_removed": closings,
         "citations_total": cit_total,
         "citations_missing": cit_missing,
+        "citations_ok": cit_ok,
+        "citations_symbol_far": cit_far,
+        "citations_symbol_absent": cit_absent,
         "prompt_hashes": dict(prompt_hashes),
     }
 
