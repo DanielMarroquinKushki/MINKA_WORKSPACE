@@ -106,6 +106,10 @@ class Orchestrator:
         # Ramas de REPOS (tools/git/branches.py): foto por sesión, refrescada al inicio de cada
         # corrida; solo para /status, el resumen (stderr) y la nota "Búsqueda sobre:". Nunca al modelo.
         self.branches: repo_branches.RepoBranches | None = None
+        # Paso 12b: contadores para el registro siguiente (/detalle, /bien, /mal) y gate que cortó la corrida.
+        self.pending_detalle_views: int = 0
+        self.feedback_counts: dict[str, int] = {"bien": 0, "mal": 0}
+        self.last_budget_gate: str | None = None
         self.last_response_lines: int = 0
         self.last_claims: dict = self._empty_claims()
         # Planes de 2+ pasos: con hide_investigation se muestra solo el último paso y los
@@ -283,12 +287,14 @@ class Orchestrator:
         self.consistency.clear()
 
     def investigation(self, turn: int | None = None) -> dict | None:
-        """Investigación oculta del último pedido o del pedido `turn` (1-based en la sesión)."""
+        """Investigación oculta del último pedido o del pedido `turn` (1-based en la sesión). Cada
+        consulta con resultado cuenta como vista de /detalle en el registro de la corrida siguiente."""
         if not self.investigations:
             return None
-        if turn is None:
-            return self.investigations[-1]
-        return next((inv for inv in self.investigations if inv["turn"] == turn), None)
+        inv = self.investigations[-1] if turn is None else next((i for i in self.investigations if i["turn"] == turn), None)
+        if inv is not None:
+            self.pending_detalle_views += 1
+        return inv
 
     def _knowledge_text(self) -> list[tuple[str, int, str]]:
         """Knowledge del proyecto (extracted + learning) para el verificador, como líneas
@@ -576,12 +582,14 @@ class Orchestrator:
         self.last_response_lines = 0
         self.last_claims = self._empty_claims()
         self.last_investigation_line = None
+        self.last_budget_gate = None
         started = perf_counter()
         try:
             return self._run(task, use_llm_planner, resume, forced_agent)
-        except budget.BudgetGate:
+        except budget.BudgetGate as gate:
             self.last_run_ok = False
             self.last_exit_code = budget.EXIT_CODE
+            self.last_budget_gate = gate.kind
             raise
         except BaseException:
             self.last_run_ok = False
@@ -602,16 +610,23 @@ class Orchestrator:
     _agent_log_rotated = False
 
     def _rotate_agent_log_once(self) -> None:
-        """Rotación de output/logs/agent_runs.jsonl una vez por proceso, con aviso."""
+        """Rotación de output/logs/agent_runs.jsonl y de output/metrics/runs una vez por proceso, con
+        aviso. Nunca toca output/metrics/baseline_v3.json."""
         if Orchestrator._agent_log_rotated:
             return
         Orchestrator._agent_log_rotated = True
         try:
             removed = retention.rotate_agent_runs(config)
         except Exception:  # noqa: BLE001 — la retención nunca bloquea una corrida
-            return
+            removed = 0
         if removed:
             self._announce(retention.rotation_notice(removed, config))
+        try:
+            files, lines = metrics.rotate_runs(config)
+        except Exception:  # noqa: BLE001
+            return
+        if files:
+            self._announce(metrics.rotation_notice(files, lines, config))
 
     def _announce(self, line: str) -> None:
         if self.quiet or os.getenv(QUIET_ENV):
@@ -650,7 +665,13 @@ class Orchestrator:
                 prompt_hash=self._prompt_hash(),
                 response_lines=self.last_response_lines,
                 claims=self.last_claims,
+                detalle_views=self.pending_detalle_views,
+                branches_off_base=len(self.branches.off_base()) if self.branches is not None else 0,
+                budget_gate=self.last_budget_gate,
+                estimate_shown=self.last_estimate is not None,
+                profile=self.last_profile,
             )
+            self.pending_detalle_views = 0
         except Exception:  # noqa: BLE001
             return {}
         metrics.write_run_record(record)

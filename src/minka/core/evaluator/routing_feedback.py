@@ -24,12 +24,15 @@ from minka.core import security
 from minka.core.orchestrator import router
 
 FEEDBACK_NAME = "routing_feedback.jsonl"
+RESPONSE_FEEDBACK_NAME = "response_feedback.jsonl"
+VERDICTS = ("bien", "mal")
 DRAFT_NAME = "routing_cases.draft.json"
 PROJECT_CASES_NAME = "routing_cases.json"
 REQUEST_MAX_CHARS = 120
 NOTE_MAX_CHARS = 80
 AGENTS = ("architecture", "development", "debug", "pr_review", "report", "meta")
 USAGE = "Uso: /mal [agente_esperado] [nota hasta 80 caracteres] — marca la última decisión del router como equivocada."
+USAGE_BIEN = "Uso: /bien [nota hasta 80 caracteres] — marca la última respuesta como buena."
 
 
 def evals_dir(cfg) -> Path | None:
@@ -42,6 +45,11 @@ def evals_dir(cfg) -> Path | None:
 def feedback_path(cfg) -> Path | None:
     d = evals_dir(cfg)
     return d / FEEDBACK_NAME if d else None
+
+
+def response_feedback_path(cfg) -> Path | None:
+    d = evals_dir(cfg)
+    return d / RESPONSE_FEEDBACK_NAME if d else None
 
 
 def draft_path(cfg) -> Path | None:
@@ -114,6 +122,30 @@ def write_feedback(cfg, record: dict, request: str, expected: str | None, note: 
     entry = build_entry(record, request, expected, note, getattr(cfg, "ACTIVE_PROJECT", None))
     _secure_append(path, json.dumps(entry, ensure_ascii=False))
     return path
+
+
+def write_response_feedback(cfg, record: dict, verdict: str, note: str) -> tuple[Path, dict]:
+    """`/bien` o `/mal` sobre la última respuesta: ts, run_id, project, router, plan, verdict, nota
+    redactada (≤ NOTE_MAX_CHARS) y su longitud. NUNCA el pedido, la respuesta, el historial ni el
+    reasoning. Archivo 0600 en carpeta 0700. Devuelve (ruta, entrada)."""
+    if verdict not in VERDICTS:
+        raise ValueError(f"verdict debe ser {VERDICTS}")
+    path = response_feedback_path(cfg)
+    if path is None:
+        raise ValueError("no hay proyecto activo")
+    clean = security.redact((note or "").strip())[0][:NOTE_MAX_CHARS]
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "run_id": record.get("run_id"),
+        "project": getattr(cfg, "ACTIVE_PROJECT", None),
+        "router": record.get("router"),
+        "plan": list(record.get("plan") or []),
+        "verdict": verdict,
+        "note": clean,
+        "note_len": len(clean),
+    }
+    _secure_append(path, json.dumps(entry, ensure_ascii=False))
+    return path, entry
 
 
 def read_feedback(path: Path) -> list[dict]:

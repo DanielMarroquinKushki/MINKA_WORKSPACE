@@ -263,7 +263,41 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
                 critical=False,
             )
         )
+    # Permisos de los archivos de datos (métricas, logs, trazas, feedback, baseline): aviso, no bloquea.
+    open_files = loose_permissions(cfg)
+    checks.append(
+        Check(
+            "Permisos de datos",
+            not open_files,
+            "métricas, logs, trazas y feedback en 0600" if not open_files
+            else f"{len(open_files)} archivo(s) con permisos más abiertos que 0600 (p.ej. {open_files[0]})",
+            "chmod 600 sobre esos archivos (y 700 sobre sus carpetas); las corridas nuevas ya se escriben así.",
+            critical=False,
+        )
+    )
     return checks
+
+
+def loose_permissions(cfg) -> list[str]:
+    """Rutas (relativas a OUTPUT_DIR o PROJECTS_DIR) de archivos de datos con bits de grupo/otros."""
+    out: list[str] = []
+    output = Path(getattr(cfg, "OUTPUT_DIR", "."))
+    projects = Path(getattr(cfg, "PROJECTS_DIR", output / "no-projects"))
+    candidates: list[tuple[Path, Path]] = []
+    for sub in ("metrics", "logs", "trace"):
+        base = output / sub
+        if base.is_dir():
+            candidates += [(p, output) for p in base.rglob("*") if p.is_file()]
+    if projects.is_dir():
+        candidates += [(p, projects) for p in projects.glob("*/evals/*_feedback.jsonl") if p.is_file()]
+        candidates += [(p, projects) for p in projects.glob("*/evals/routing_cases.draft.json") if p.is_file()]
+    for p, root in candidates:
+        try:
+            if p.stat().st_mode & 0o077:
+                out.append(p.relative_to(root).as_posix())
+        except OSError:
+            continue
+    return out
 
 
 def has_critical_failure(checks: list[Check]) -> bool:

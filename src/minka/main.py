@@ -273,8 +273,42 @@ def _resolve_budget_gate(orchestrator, gate, tty: bool) -> bool:
     return False
 
 
+def _record_response_feedback(orchestrator, verdict: str, note: str) -> None:
+    """`/bien` y `/mal` sobre la última respuesta: solo contadores, ids y la nota redactada."""
+    from minka.core.evaluator import routing_feedback as rf
+
+    record = getattr(orchestrator, "last_run_record", None) or {}
+    try:
+        path, entry = rf.write_response_feedback(config, record, verdict, note)
+    except (OSError, ValueError) as exc:
+        console.print(f"[yellow]No se pudo registrar: {exc}[/yellow]")
+        return
+    counts = getattr(orchestrator, "feedback_counts", None)
+    if isinstance(counts, dict):
+        counts[verdict] = counts.get(verdict, 0) + 1
+    console.print(
+        f"Guardado en {path.name} (0600): {verdict} · run {str(entry['run_id'])[:12]} · ruta {entry['router']} · "
+        f"plan {len(entry['plan'])} paso(s) · nota {entry['note_len']} caracteres (redactada). "
+        "Sin pedido, respuesta ni historial.",
+        style="dim", markup=False, highlight=False,
+    )
+
+
+def _mark_good_response(orchestrator, rest: str) -> None:
+    """Comando /bien [nota]."""
+    from minka.core.evaluator import routing_feedback as rf
+
+    record = getattr(orchestrator, "last_run_record", None) or {}
+    if not record.get("run_id"):
+        console.print("[yellow]No hay una corrida previa en esta sesión que marcar.[/yellow]")
+        console.print(rf.USAGE_BIEN, style="dim", markup=False, highlight=False)
+        return
+    _record_response_feedback(orchestrator, "bien", rest)
+
+
 def _mark_bad_routing(orchestrator, rest: str) -> None:
-    """Comando /mal — registra la última decisión del router como equivocada."""
+    """Comando /mal [agente] [nota] — marca la última respuesta como mala (response_feedback) y, además,
+    la decisión del router como equivocada (routing_feedback, para armar casos golden)."""
     from minka.core.evaluator import routing_feedback as rf
 
     record = getattr(orchestrator, "last_run_record", None) or {}
@@ -284,6 +318,7 @@ def _mark_bad_routing(orchestrator, rest: str) -> None:
         console.print(rf.USAGE, style="dim", markup=False, highlight=False)  # los [corchetes] son literales
         return
     expected, note = rf.parse_command(rest)
+    _record_response_feedback(orchestrator, "mal", note)
     try:
         path = rf.write_feedback(config, record, turns[-1].request, expected, note)
     except (OSError, ValueError) as exc:
@@ -296,7 +331,7 @@ def _mark_bad_routing(orchestrator, rest: str) -> None:
     )
 
 
-def _print_status(turns: int, session_usd: float = 0.0, branches: str = "") -> None:
+def _print_status(turns: int, session_usd: float = 0.0, branches: str = "", feedback: dict | None = None) -> None:
     """Comando /status — estado del sistema."""
     if getattr(config, "USE_BEDROCK", False):
         token = config.get_aws_session().sso_token_status()
@@ -323,6 +358,7 @@ def _print_status(turns: int, session_usd: float = 0.0, branches: str = "") -> N
         f" Backend    : {backend_line}",
         f" Repos Go   : {' | '.join(repo_parts)}",
         f" Ramas      : {branches or '—'}",
+        f" Feedback   : {(feedback or {}).get('bien', 0)} /bien · {(feedback or {}).get('mal', 0)} /mal en la sesión",
         f" Memoria    : {turns} turnos en sesión",
         f" Gasto      : ${session_usd:.2f} en la sesión (tope ${budget.session_max_usd():.2f}, "
         f"ráfaga {budget.burst_n()} corridas a <{budget.burst_gap_seconds():g} s)",
@@ -918,7 +954,7 @@ def main(
         reader = _make_reader()
         keys = " Enter envía; Alt+Enter, salto de línea." if reader.tty else ""
         console.print(
-            f"[dim]Escribe tu pedido en español.{keys} Comandos: /status, /clear, /detalle, /mal, salir.[/dim]\n"
+            f"[dim]Escribe tu pedido en español.{keys} Comandos: /status, /clear, /detalle, /bien, /mal, salir.[/dim]\n"
         )
         try:
             while True:
@@ -935,10 +971,14 @@ def main(
                         len(getattr(orchestrator, "memory", [])),
                         getattr(orchestrator, "session_usd", 0.0),
                         branches.status_line() if branches is not None else "",
+                        getattr(orchestrator, "feedback_counts", None),
                     )
                     continue
                 if low == "/mal" or low.startswith("/mal "):
                     _mark_bad_routing(orchestrator, user_input[4:])
+                    continue
+                if low == "/bien" or low.startswith("/bien "):
+                    _mark_good_response(orchestrator, user_input[5:])
                     continue
                 if low == "/clear":
                     orchestrator.clear_session()
@@ -950,7 +990,7 @@ def main(
                     continue
                 if low.startswith("/"):
                     console.print(
-                        "[yellow]Comando desconocido. Disponibles: /status, /clear, /detalle, /mal, salir.[/yellow]"
+                        "[yellow]Comando desconocido. Disponibles: /status, /clear, /detalle, /bien, /mal, salir.[/yellow]"
                     )
                     continue
                 # El historial vive en orchestrator.memory: aquí solo viaja el pedido crudo.
@@ -1015,6 +1055,53 @@ def trace_cmd(
     console.print(trace_log.format_run(path, trace_log.read_run(path)), markup=False, highlight=False)
 
 
+def _stats_purge(before: str | None, yes: bool) -> None:
+    """`stats --purge`: por defecto solo cuenta; con --yes borra. Nunca toca baseline_v3.json."""
+    from datetime import date
+
+    limit = None
+    if before:
+        try:
+            limit = date.fromisoformat(before)
+        except ValueError:
+            console.print("[red]--before debe ser AAAA-MM-DD[/red]")
+            raise typer.Exit(code=2)
+    plan = metrics.purge_plan(config, limit)
+    if not plan:
+        console.print("Nada que borrar.")
+        return
+    by_kind: dict[str, tuple[int, int]] = {}
+    for kind, _, n in plan:
+        f, lines = by_kind.get(kind, (0, 0))
+        by_kind[kind] = (f + 1, lines + n)
+    resumen = " · ".join(f"{k}: {f} archivo(s), {n} línea(s)" for k, (f, n) in sorted(by_kind.items()))
+    if not yes:
+        console.print(
+            f"Simulación (nada borrado): {resumen}. Añade --yes para borrar. baseline_v3.json nunca se toca.",
+            soft_wrap=True, markup=False, highlight=False,
+        )
+        return
+    removed = metrics.purge(plan)
+    console.print(f"Borrados {removed} archivo(s): {resumen}. baseline_v3.json intacto.", soft_wrap=True, markup=False, highlight=False)
+
+
+def _stats_freeze_baseline(force: bool) -> None:
+    try:
+        payload = metrics.freeze_baseline(config, force=force)
+    except FileExistsError as exc:
+        console.print(f"[yellow]Ya existe {exc}; usa --force para sobrescribirlo.[/yellow]")
+        raise typer.Exit(code=1)
+    cats = payload["categories"]
+    console.print(
+        f"baseline_v3.json escrito (0600): rango {payload['range'][0]}..{payload['range'][1]}, "
+        f"{cats['corridas']['n']} corridas. {payload['note']}",
+        markup=False, highlight=False, soft_wrap=True,
+    )
+    for name, c in cats.items():
+        if name != "corridas":
+            console.print(f"  {name}: {c['value'] if c['value'] is not None else '—'} (n={c['n']})", markup=False, highlight=False)
+
+
 @app.command("stats", help="Tokens, cache, costo y tiempo de las corridas registradas.")
 def stats(
     day: str = typer.Option(None, "--day", help="Día local YYYY-MM-DD (default: hoy)."),
@@ -1024,7 +1111,20 @@ def stats(
     source: str = typer.Option(
         None, "--source", help=f"Solo corridas con este origen (repl|cli|bridge o la etiqueta {SOURCE_ENV})."
     ),
+    purge: bool = typer.Option(False, "--purge", help="Simula el borrado de métricas, logs y feedback (con --yes borra)."),
+    before: str = typer.Option(None, "--before", help="Con --purge: solo runs/<día>.jsonl anteriores a AAAA-MM-DD."),
+    yes: bool = typer.Option(False, "--yes", help="Con --purge: borra de verdad."),
+    freeze_baseline: bool = typer.Option(
+        False, "--freeze-baseline", help="Escribe output/metrics/baseline_v3.json desde los registros del rango v3 (no sobrescribe sin --force)."
+    ),
+    force: bool = typer.Option(False, "--force", help="Con --freeze-baseline: sobrescribe el baseline existente."),
 ):
+    if purge:
+        _stats_purge(before, yes)
+        return
+    if freeze_baseline:
+        _stats_freeze_baseline(force)
+        return
     label = f"mes {month}" if month else f"día {day or metrics.local_day()}"
     if source:
         label += f" · source {source}"

@@ -269,6 +269,9 @@ TRACE_ENABLED = os.getenv("TRACE_ENABLED", "").strip().lower() in ("1", "true", 
 TRACE_KEEP_DAYS = int(os.getenv("TRACE_KEEP_DAYS", "7"))
 # Retención de output/logs/agent_runs.jsonl (no toca las métricas de output/metrics/runs).
 AGENT_LOG_KEEP_DAYS = int(os.getenv("AGENT_LOG_KEEP_DAYS", "30"))
+# Retención de output/metrics/runs/<día>.jsonl (archivos completos más viejos que esto se retiran al
+# abrir la primera corrida del proceso, con aviso). Nunca toca output/metrics/baseline_v3.json.
+METRICS_KEEP_DAYS = int(os.getenv("METRICS_KEEP_DAYS", "90"))
 # `minka doctor` avisa si .chromadb, logs, trace o runs superan este tamaño.
 DOCTOR_SIZE_WARN_MB = int(os.getenv("DOCTOR_SIZE_WARN_MB", "500"))
 

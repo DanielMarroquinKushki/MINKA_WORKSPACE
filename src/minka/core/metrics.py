@@ -7,9 +7,10 @@ resultado: esa traza de depuración sigue en output/logs/agent_runs.jsonl.
 import json
 import math
 import os
+import re
 import statistics
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from minka.config_loader import config
@@ -39,6 +40,46 @@ def local_day(fmt: str = "%Y-%m-%d") -> str:
 
 def runs_dir(cfg=None) -> Path:
     return Path((cfg or config).OUTPUT_DIR) / "metrics" / "runs"
+
+
+def baseline_path(cfg=None) -> Path:
+    return Path((cfg or config).OUTPUT_DIR) / "metrics" / "baseline_v3.json"
+
+
+def mkdir_private(path: Path) -> None:
+    """Directorio 0700 (se crea y se ajusta aunque ya existiera con permisos más abiertos)."""
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
+def append_private(path: Path, line: str) -> None:
+    """Añade una línea a un archivo 0600 dentro de un directorio 0700 (patrón de trace_log)."""
+    mkdir_private(path.parent)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(fd, (line + "\n").encode("utf-8"))
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def write_private(path: Path, text: str) -> None:
+    mkdir_private(path.parent)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def cache_ratio(tokens: dict) -> float | None:
@@ -86,6 +127,11 @@ def build_run_record(
     prompt_hash: str | None = None,
     response_lines: int = 0,
     claims: dict | None = None,
+    detalle_views: int = 0,
+    branches_off_base: int = 0,
+    budget_gate: str | None = None,
+    estimate_shown: bool = False,
+    profile: str | None = None,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -154,6 +200,13 @@ def build_run_record(
         "security_excluded": int(totals.get("security_excluded") or 0),
         "redactions": {k: int(v) for k, v in (totals.get("redactions") or {}).items()},
         "truncated_outputs": int((claims or {}).get("truncated") or 0),
+        # Paso 12b: uso de /detalle desde la corrida anterior, repos fuera de su rama base, freno de
+        # presupuesto (kind) que cortó la corrida, si se mostró estimado previo y el perfil de respuesta.
+        "detalle_views": int(detalle_views),
+        "branches_off_base": int(branches_off_base),
+        "budget_gate": budget_gate,
+        "estimate_shown": bool(estimate_shown),
+        "profile": profile,
         # Huella de prompts + tools + modelos (core/baseline.py): misma línea base ⇔ mismo hash.
         "prompt_hash": prompt_hash,
         "ok": ok,
@@ -198,12 +251,168 @@ def write_run_record(record: dict, cfg=None) -> bool:
     """Best-effort: la contabilidad nunca rompe un run."""
     try:
         target = runs_dir(cfg)
-        target.mkdir(parents=True, exist_ok=True)
-        with (target / f"{local_day()}.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        mkdir_private(target.parent)
+        append_private(target / f"{local_day()}.jsonl", json.dumps(record, ensure_ascii=False))
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+_DAY_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl$")
+
+
+def _day_files(cfg=None) -> list[tuple[date, Path]]:
+    out = []
+    for p in sorted(runs_dir(cfg).glob("*.jsonl")):
+        m = _DAY_FILE_RE.match(p.name)
+        if not m:
+            continue
+        try:
+            out.append((date.fromisoformat(m.group(1)), p))
+        except ValueError:
+            continue
+    return out
+
+
+def _count_lines(path: Path) -> int:
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip())
+    except OSError:
+        return 0
+
+
+def rotate_runs(cfg=None, today: date | None = None) -> tuple[int, int]:
+    """Retira los archivos de output/metrics/runs con más de METRICS_KEEP_DAYS días (el archivo
+    completo, por día). Devuelve (archivos, líneas) retirados. Nunca toca baseline_v3.json ni nada
+    fuera de runs/."""
+    cfg = cfg or config
+    keep = int(getattr(cfg, "METRICS_KEEP_DAYS", 90) or 0)
+    if keep <= 0:
+        return 0, 0
+    cutoff = (today or date.today()) - timedelta(days=keep)
+    files = lines = 0
+    for day, path in _day_files(cfg):
+        if day < cutoff:
+            n = _count_lines(path)
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            files += 1
+            lines += n
+    return files, lines
+
+
+def rotation_notice(files: int, lines: int, cfg=None) -> str:
+    keep = int(getattr(cfg or config, "METRICS_KEEP_DAYS", 90) or 0)
+    return f"metrics/runs: {lines} línea(s) en {files} archivo(s) con más de {keep} días retiradas"
+
+
+def purge_plan(cfg=None, before: date | None = None) -> list[tuple[str, Path, int]]:
+    """Qué borraría `stats --purge`: (etiqueta, ruta, líneas) de runs/<día>.jsonl, logs/agent_runs.jsonl(.1)
+    y los feedback de evals de cada proyecto, anteriores a `before` (sin fecha: todo). Nunca el baseline."""
+    cfg = cfg or config
+    out: list[tuple[str, Path, int]] = []
+    for day, path in _day_files(cfg):
+        if before is None or day < before:
+            out.append(("runs", path, _count_lines(path)))
+    logs = Path(cfg.OUTPUT_DIR) / "logs"
+    for name in ("agent_runs.jsonl", "agent_runs.jsonl.1"):
+        p = logs / name
+        if p.is_file() and before is None:
+            out.append(("logs", p, _count_lines(p)))
+    projects = Path(getattr(cfg, "PROJECTS_DIR", Path(cfg.OUTPUT_DIR) / "no"))
+    if projects.is_dir() and before is None:
+        for p in sorted(projects.glob("*/evals/*_feedback.jsonl")):
+            out.append(("feedback", p, _count_lines(p)))
+    return out
+
+
+def purge(plan: list[tuple[str, Path, int]]) -> int:
+    removed = 0
+    for _, path, _ in plan:
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+# -- línea base v3 y categorías de salud -----------------------------------------------------------
+
+BASELINE_V3_RANGE = ("2026-11-05", "2026-11-11")
+BASELINE_V3_NOTE = (
+    "Referencia previa al paso 12, no una meta: corridas ok del REPL/CLI del 2026-11-05 al 2026-11-11, "
+    "sin eval_quality. 'Citas verificadas' cambió de significado en 0.2.4 (símbolo cerca de la cita): "
+    "citations_total/missing son los comparables; citations_ok/symbol_* no existían en este rango."
+)
+
+
+def _median(values: list[float]) -> float | None:
+    return round(statistics.median(values), 4) if values else None
+
+
+def health_categories(records: list[dict]) -> dict[str, dict]:
+    """{categoría: {value, n}} sobre corridas ok sin eval_quality. Solo números."""
+    recs = [r for r in records if r.get("ok") and r.get("source") not in EXCLUDED_SOURCES]
+    out: dict[str, dict] = {}
+    by_route: dict[str, list[float]] = {}
+    for r in recs:
+        if r.get("cost_usd") is None:
+            continue
+        key = route_key(r.get("router"), len(r.get("plan") or []))
+        if key.startswith("llm/") and int(key.split("/")[1]) >= 2:
+            key = "llm/2+"
+        by_route.setdefault(key, []).append(float(r["cost_usd"]))
+    for key in ("info_direct/1", "llm/1", "llm/2+", "forced/1"):
+        vals = by_route.get(key, [])
+        out[f"costo_mediano_{key}"] = {"value": _median(vals), "n": len(vals)}
+    caches = [c for c in (cache_ratio(r.get("tokens") or {}) for r in recs) if c is not None]
+    out["cache_mediana"] = {"value": _median(caches), "n": len(caches)}
+    with_cit = [r for r in recs if r.get("citations_total")]
+    total = sum(r["citations_total"] for r in with_cit)
+    out["citas_no_encontradas_pct"] = {
+        "value": round(sum(r.get("citations_missing") or 0 for r in with_cit) / total, 4) if total else None,
+        "n": total,
+    }
+    sym = sum((r.get("citations_symbol_far") or 0) + (r.get("citations_symbol_absent") or 0) for r in with_cit)
+    out["citas_simbolo_lejano_o_ausente_pct"] = {"value": round(sym / total, 4) if total else None, "n": total}
+    n = len(recs)
+    out["interrumpidas_pct"] = {"value": round(sum(1 for r in recs if r.get("interrupted")) / n, 4) if n else None, "n": n}
+    out["vueltas_con_tope_pct"] = {"value": round(sum(1 for r in recs if r.get("iterations_capped")) / n, 4) if n else None, "n": n}
+    out["cierres_con_oferta_pct"] = {"value": round(sum(1 for r in recs if r.get("ends_with_offer")) / n, 4) if n else None, "n": n}
+    out["corridas"] = {"value": n, "n": n}
+    return out
+
+
+def records_between(start: str, end: str, cfg=None) -> list[dict]:
+    """Registros de los días [start, end] (ISO), inclusive."""
+    d0, d1 = date.fromisoformat(start), date.fromisoformat(end)
+    out: list[dict] = []
+    day = d0
+    while day <= d1:
+        out.extend(read_run_records(day=day.isoformat(), cfg=cfg))
+        day += timedelta(days=1)
+    return out
+
+
+def freeze_baseline(cfg=None, force: bool = False, start: str = BASELINE_V3_RANGE[0], end: str = BASELINE_V3_RANGE[1]) -> dict:
+    """Escribe output/metrics/baseline_v3.json (0600) con las categorías de salud del rango.
+    No sobrescribe uno existente sin `force` (FileExistsError)."""
+    cfg = cfg or config
+    path = baseline_path(cfg)
+    if path.exists() and not force:
+        raise FileExistsError(str(path))
+    payload = {
+        "name": "v3",
+        "range": [start, end],
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "note": BASELINE_V3_NOTE,
+        "categories": health_categories(records_between(start, end, cfg)),
+    }
+    write_private(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return payload
 
 
 def read_run_records(day: str | None = None, month: str | None = None, cfg=None) -> list[dict]:

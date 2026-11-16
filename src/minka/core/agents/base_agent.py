@@ -691,7 +691,8 @@ class BaseAgent(ABC):
                 "result_preview": security.redact(result[:500])[0],
                 "usage": self.last_usage,
             }
-            with (log_dir / "agent_runs.jsonl").open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            from minka.core import metrics as _metrics
+
+            _metrics.append_private(log_dir / "agent_runs.jsonl", json.dumps(entry, ensure_ascii=False))
         except Exception:  # noqa: BLE001 — el logging nunca debe romper el flujo
             pass

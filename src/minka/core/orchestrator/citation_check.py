@@ -80,18 +80,42 @@ def _status(index: cit.RepoIndex, path: str, line: int | None, cache: dict) -> s
     return status
 
 
-def _symbol_check(index: cit.RepoIndex, path: str, line: int, line_text: str, cache: dict) -> tuple[str, int | None]:
-    """(estado, distancia): `ok` si no hay símbolo que comprobar o está a ≤ SYMBOL_WINDOW líneas."""
-    symbols = cit.symbols_for_citation(line_text)
+def _symbol_check(
+    index: cit.RepoIndex, path: str, line: int, line_text: str, cache: dict,
+    symbols: list[str] | None = None, line_end: int | None = None,
+) -> tuple[str, int | None]:
+    """(estado, distancia): `ok` si no hay símbolo que comprobar o está a ≤ SYMBOL_WINDOW líneas de
+    la cita (del rango a-b completo, si lo hay). `symbols`: los asignados a ESTA cita."""
+    symbols = cit.symbols_for_citation(line_text) if symbols is None else symbols
     if not symbols:
         return cit.STATUS_OK, None
     _, matches = index.resolve(path)
     lines = _source_lines(matches[0][1], cache)
     if lines is None:
         return cit.STATUS_OK, None
-    probe = cit.Citation(doc="respuesta", md_line=0, raw=f"{path}:{line}", path=path, line=line)
+    probe = cit.Citation(doc="respuesta", md_line=0, raw=f"{path}:{line}", path=path, line=line, line_end=line_end)
     cit._check_symbols(probe, lines, line_text, symbols=symbols)
     return probe.status, probe.distance
+
+
+def _assign_symbols(line_text: str, cites: list) -> dict[int, list[str]]:
+    """Cada símbolo (identificador en backticks con mayúscula, `_` o `.`) va a la cita con número de
+    línea más cercana en el texto (distancia en caracteres): en "`A` (x.go:10) y `B` (y.go:20)" `A` no
+    se busca en y.go. Devuelve {posición de inicio de la cita: símbolos}."""
+    out: dict[int, list[str]] = {}
+    targets = [m for m in cites if m.group(2)]
+    if not targets:
+        return out
+    for s in cit.BACKTICK_SYMBOL_RE.finditer(line_text):
+        raw = s.group(1)
+        if not re.search(r"[A-Z_.]", raw):
+            continue
+        nearest = min(targets, key=lambda m: min(abs(s.start() - m.start()), abs(s.end() - m.end())))
+        name = raw.split(".")[-1]
+        bucket = out.setdefault(nearest.start(), [])
+        if name and name not in bucket:
+            bucket.append(name)
+    return out
 
 
 def _annotate_line(line: str, index: cit.RepoIndex, cache: dict) -> tuple[str, CheckResult]:
@@ -100,7 +124,9 @@ def _annotate_line(line: str, index: cit.RepoIndex, cache: dict) -> tuple[str, C
     out: list[str] = []
     pos = 0
     counts = CheckResult("")
-    for m in cit.CITATION_RE.finditer(masked):
+    cites = list(cit.CITATION_RE.finditer(masked))
+    assigned = _assign_symbols(masked, cites)
+    for m in cites:
         path, start = m.group(1), m.group(2)
         counts.total += 1
         status = _status(index, path, int(start) if start else None, cache)
@@ -112,7 +138,10 @@ def _annotate_line(line: str, index: cit.RepoIndex, cache: dict) -> tuple[str, C
         if mark:
             counts.missing += 1
         elif status == cit.STATUS_OK and start:
-            sym_status, distance = _symbol_check(index, path, int(start), line, cache)
+            sym_status, distance = _symbol_check(
+                index, path, int(start), line, cache,
+                symbols=assigned.get(m.start(), []), line_end=int(m.group(3)) if m.group(3) else None,
+            )
             if sym_status == cit.STATUS_SYMBOL_MOVED:
                 counts.symbol_far += 1
                 mark = MARK_SYMBOL_FAR.format(n=distance)
