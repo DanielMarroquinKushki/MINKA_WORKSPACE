@@ -40,6 +40,14 @@ alguno supera `DOCTOR_SIZE_WARN_MB` (500).
    `estimado ~$X (mediana de N corridas)` y pide confirmación si supera `ESTIMATE_CONFIRM_USD`
    (0.50); con menos de `ESTIMATE_MIN_RUNS` corridas de esa ruta dice `sin estimado`. `/status`
    muestra el $ de la sesión; `stats` y `doctor` avisan al alcanzar `DAILY_MAX_USD` (20) sin bloquear.
+0b. Marcas del verificador (0.2.4): `⚠ símbolo a N líneas` / `⚠ símbolo no está en el archivo` (la
+   cita existe pero el identificador no está cerca), `⚠ id inexistente en el catálogo`, `⚠ sin fuente`
+   (duración que no está ni en el repo ni en el knowledge), `(solo knowledge: archivo:línea)`,
+   `(entrada del <fecha>; verifica en el código)` (contexto con más de `CONTEXT_STALE_DAYS`=30 días) y
+   la línea final `Búsqueda sobre: pos@rama (+N sobre master)…` cuando la respuesta niega algo con
+   algún repo fuera de master. En `stats`: `citas no encontradas: m/t · símbolo ok/lejano/ausente` y
+   `riesgos sin catálogo`. Las líneas base antiguas de citas (28/0, 49/1, 37/0) solo se comparan con el
+   contador antiguo `no encontradas/total`.
 1. `minka stats --day` (o `--month`). Mira primero **rutas del router**: `info_direct` es una
    llamada directa a architecture (barata); `llm` pasa por el planner y suele encadenar pasos.
    Si la proporción de `llm` subió, revisa qué pedidos lo provocan (`minka trace --last` con la
@@ -130,3 +138,9 @@ temporal (`file://`), nunca contra `origin`; `tests/test_release_scripts.py` lo 
 - El costo del planner entra en `cost_usd` desde el lote 5: las medianas de la ruta `llm` no son
   comparables con las corridas anteriores (mismo `prompt_hash`, distinta contabilidad).
 - Las dos mediciones del lote 5 (`ka` breve, `inherit_repo`) son de una muestra por par.
+- Paso 12 (0.2.4): símbolo cerca de la cita, ids `R-nn`, duraciones con procedencia y antigüedad del
+  contexto probados sin red (repos git temporales, fechas fijas) y medidos sobre vistas previas de 500
+  caracteres ya anotadas (26/322 citas cambiarían de estado; 0 marcas nuevas de duración; 6 R-nn
+  existentes). No se han ejercitado en respuestas completas. La foto de ramas costó ~430 ms por
+  corrida con 4 repos en una máquina; no medida en otras. La parte 2 se publicó dentro del commit
+  `0285a45`, titulado como la parte 1.

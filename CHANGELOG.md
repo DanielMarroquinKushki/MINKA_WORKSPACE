@@ -1,5 +1,56 @@
 # Cambios
 
+## 0.2.4 — paso 12 (que minka no afirme de más)
+
+Nada mueve la línea base de prompts (`prompt_hash` aabeff39c4ee / a447c50efa60). Nota de historia:
+la parte 2 se publicó dentro del commit `0285a45`, titulado como la parte 1.
+
+### Parte 1
+- Ids `R-nn` contra el `risk_catalog.md` del proyecto: existentes → `(doc: risk_catalog.md)`;
+  inexistentes → `⚠ id inexistente en el catálogo: R-14`. Sin catálogo no se marca nada. Contador
+  `risks_unsupported` en el registro, `aggregate` y `minka stats` ("riesgos sin catálogo").
+- Duraciones (`300 s`, `5 min`, `30s`, `1h`, `3 días`…) con procedencia en tres niveles: en el repo →
+  sin marca (código); solo en `knowledge/extracted|learning` → `(solo knowledge: 300 s →
+  archivo:línea)`; en ninguno → `⚠ sin fuente: 1800 s`. Líneas con "reunión" excluidas.
+  `Evidence.docs` pasa de texto a lista (archivo, línea, texto) y `load_project_docs` devuelve esa lista.
+- Saludo + texto ("hola minka, estoy de vuelta", "buenas, retomemos lo de ayer"): se enruta lo que
+  sigue al saludo; sin señal de tarea → `ambiguous` ($0). "hola" sigue en `small_talk`; "hola, ¿dónde…?"
+  en `info_direct`. El caso golden `buenas_tardes_equipo` pasa de `no_plan` (planner) a `ambiguous`.
+- `/mal`: el uso muestra `[agente_esperado] [nota]` literalmente (Rich los tomaba como markup).
+- `ConsistencyMemory` compara solo entre corridas distintas (clave pregunta + `run_id`): los pasos de
+  un mismo plan ya no producen "⚠ inconsistente con la corrida anterior".
+- Estimado previo por clave (ruta, nº de pasos) (`metrics.route_key`, `route_median_counts(by_steps=True)`):
+  un plan de 2 pasos no se estima con la mediana de los de 1; con menos de `ESTIMATE_MIN_RUNS`, `sin estimado`.
+- `quality_evals.score` quita las marcas del verificador (`claim_check.strip_marks`) antes de puntuar.
+
+### Parte 2
+- Símbolo cerca de la cita (`citation_check`, reutiliza `citations._check_symbols`, `SYMBOL_WINDOW=5`):
+  símbolo = identificador en backticks de la misma línea con mayúscula, `_` o `.` (las minúsculas sueltas
+  no cuentan). Estados `ok`, `⚠ símbolo a N líneas`, `⚠ símbolo no está en el archivo`. Una línea con
+  varios símbolos vale si alguno está cerca. Contadores nuevos `citations_ok`, `citations_symbol_far`,
+  `citations_symbol_absent` junto a los antiguos `citations_total`/`citations_missing` (registro,
+  `aggregate`, resumen de corrida y `stats`).
+- Antigüedad del contexto: `team/session_log.md` y `team/decisions_log.md` entran SOLO como evidencia
+  del verificador (índice fecha → archivo), nunca en el prompt ni en `AGENT_KNOWLEDGE`.
+  `CONTEXT_STALE_DAYS=30`: fecha o ADR más viejo → `(entrada del <fecha>; verifica en el código)`;
+  reciente → `(doc: session_log)`. Las fechas del contexto y la fecha dentro de `ADR-nnn (fecha)` ya
+  no salen "⚠ sin respaldo".
+- Rama por repo (`core/tools/git/branches.py`, solo lectura: `rev-parse --abbrev-ref HEAD` y
+  `rev-list --left-right --count base...HEAD`, base master → main → origin/*): foto al inicio de cada
+  corrida y en `/status` ("Ramas"); en el resumen de corrida (stderr) solo si algún repo no está en su
+  base. Si la respuesta dice "no existe", "no hay" o `[NO ENCONTRADO` y algún repo no está en su base,
+  se añade `_Búsqueda sobre: pos@rama (+N sobre master), hsm@rama (M detrás)_` (solo para mostrar).
+  Nunca va al mensaje del modelo.
+
+### Límites
+- Mediciones del mes sobre vistas previas de 500 caracteres ya anotadas (`agent_runs.jsonl`), no sobre
+  respuestas completas: 26 de 322 citas cambiarían de estado (18 lejano, 8 ausente); 0 marcas nuevas
+  de duración y 6 `R-nn` todos existentes. Ids `R-nn` y duraciones sin ejercitar en respuestas completas.
+- La foto de ramas cuesta ~430 ms por corrida con 4 repos (git local, medido en una máquina).
+- "Citas verificadas" cuenta ahora cosas distintas: las líneas base anteriores (28/0, 49/1, 37/0) solo son
+  comparables con el contador antiguo `citations_total`/`citations_missing`, que se conserva.
+- Todo probado sin red (repos git temporales, agentes y planner falsos, fechas fijas).
+
 ## 0.2.3 — lote 5 (router)
 
 Nada mueve la línea base de prompts (`prompt_hash`).

@@ -47,7 +47,10 @@ siempre por confirmación humana (`core/orchestrator/approval_gate.py:1-4`).
 - **Verificador**: citas `archivo:línea` contra REPOS (`core/orchestrator/citation_check.py:1-10`) e
   identificadores, bloques de código y cifras contra pedido, paso previo, repos y knowledge
   (`core/orchestrator/claim_check.py:1-11`). Anota en el texto; el texto anotado es el que hereda la
-  memoria.
+  memoria. Desde 0.2.4 (paso 12) también: símbolo a ≤5 líneas de la cita (`ok` / `⚠ símbolo a N
+  líneas` / `⚠ símbolo no está en el archivo`), ids `R-nn` contra el catálogo, duraciones con
+  procedencia y fechas/ADR del contexto con antigüedad (`CONTEXT_STALE_DAYS`=30). Las notas
+  "Búsqueda sobre: pos@rama…" (repos fuera de master) y "respuesta acotada" son solo para mostrar.
 - **Formato**: perfil de respuesta por ruta (`core/orchestrator/response_profile.py`), nota
   "respuesta acotada", y en planes de 2+ pasos solo se imprime el último paso; lo demás queda en
   `/detalle` (`core/orchestrator/orchestrator.py:186-201`, `main.py:123-152`).
@@ -135,7 +138,18 @@ bloques de código y cifras contra pedido + pasos previos + repos (`git grep`) +
 referencias `ADR-nnn` contra el historial; nombres de herramientas excluidos y "inferido sin
 herramienta" si no se ejecutó; cadenas con placeholders → "depende de runtime"; misma cita con
 valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con la corrida anterior"
-(`ConsistencyMemory`, solo RAM).
+(`ConsistencyMemory`, solo RAM; desde 0.2.4 con clave pregunta + `run_id`: los pasos de un mismo plan
+no se comparan entre sí). Paso 12: `R-nn` → "(doc: risk_catalog.md)" o "⚠ id inexistente en el
+catálogo"; duraciones → sin marca (código), "(solo knowledge: archivo:línea)" o "⚠ sin fuente";
+fechas de `team/session_log.md` y `team/decisions_log.md` (solo evidencia, nunca en el prompt) →
+"(doc: session_log)" o "(entrada del <fecha>; verifica en el código)" pasados `CONTEXT_STALE_DAYS`.
+`evals quality` puntúa sobre el texto sin marcas (`claim_check.strip_marks`).
+
+**Ramas por repo** (`core/tools/git/branches.py`): `rev-parse --abbrev-ref HEAD` y `rev-list
+--left-right --count base...HEAD` (base master → main → origin/*), una foto al inicio de cada
+corrida (~430 ms con 4 repos, medido una vez). Sale en `/status` y en el resumen de la corrida; si la
+respuesta dice "no existe", "no hay" o `[NO ENCONTRADO` y un repo no está en su base, se añade
+"_Búsqueda sobre: pos@rama (+N sobre master), hsm@rama (M detrás)_". Nunca viaja al modelo.
 
 ## 4. Comandos y flags
 
@@ -207,7 +221,8 @@ valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con
 | Enrutado determinista | 5/5 simples → info_direct; 5/5 a $0 con la ruta esperada (escaner_final B2, B5); 53 casos golden en tests (`tests/test_routing_golden.py`) | 11 / 53 |
 | Planner sin planes vacíos | empty_plan 0 %, acuerdo 78 %, estabilidad 92 % (escaner_final, 36 llamadas) | 36 |
 | Historial único sin duplicar | tareas de 53–148 chars, 0 con historial antepuesto (escaner_final) | 10 |
-| Citas verificadas y anotadas | 49 citas / 1 no encontrada y anotada (escaner_final B4); 37/0 (escaner_cierre); `tests/test_citation_check.py` | 15 + 6 resp. |
+| Citas verificadas y anotadas | 49 citas / 1 no encontrada y anotada (escaner_final B4); 37/0 (escaner_cierre); `tests/test_citation_check.py`. Desde 0.2.4 "citas verificadas" distingue además `ok` / símbolo lejano / símbolo ausente: esas líneas base (28/0, 49/1, 37/0) solo se comparan con el contador antiguo `citations_total`/`citations_missing`, que se conserva | 15 + 6 resp. |
+| Símbolo cerca de la cita, R-nn, duraciones, antigüedad, ramas | `tests/test_paso12_parte1.py` (31), `tests/test_paso12_parte2.py` (19); sobre 279 vistas previas de 500 caracteres del mes: 26/322 citas cambiarían de estado (18 lejano, 8 ausente), 0 marcas nuevas de duración, 6 R-nn todos existentes | tests · previews |
 | Afirmaciones sin respaldo marcadas | `tests/test_report_guard.py`, `tests/test_hidden_investigation.py` (21 + 19 tests); medición de 1 corrida: 2 sin respaldo y 8 "(doc)" sobre 76 | 1 |
 | Onboarding con repo ajeno | 11 pasos / 28 s en HOME temporal: build, install, init, new-project (python y go detectados), knowledge init, apply, index, doctor, check (escaner_cierre B) | 1 |
 | Proyecto por directorio actual | "(por cwd)" en dos repos temporales (escaner_cierre) | 2 |
@@ -239,9 +254,14 @@ valores distintos entre corridas de la misma pregunta → "⚠ inconsistente con
   pero exige `EVALUATOR_ENABLED` y `RUN_TESTS_AFTER_CHANGE`, ambos `False` (`config.py:249,252`).
   Git: hay `git_log`, `show_diff`, `current_branch` y commit tras aprobación; no hay `blame`
   (0 ocurrencias).
-- El verificador no demuestra verdad: comprueba que la ruta y la línea existan, y que identificadores
-  y cifras aparezcan en repos, paso previo o knowledge (`citation_check.py:1-10`,
-  `claim_check.py:1-11`). No lee dentro de bloques de código ni de literales entre comillas.
+- El verificador no demuestra verdad: comprueba que la ruta y la línea existan, que el símbolo citado
+  esté a ≤5 líneas, y que identificadores y cifras aparezcan en repos, paso previo o knowledge
+  (`citation_check.py:1-10`, `claim_check.py:1-11`). No lee dentro de bloques de código ni de literales
+  entre comillas. Una línea con varios símbolos vale si alguno está cerca; las minúsculas sueltas no
+  cuentan como símbolo.
+- Paso 12 (0.2.4) **no ejercitado en respuestas completas**: ids `R-nn`, duraciones con procedencia,
+  símbolo cerca de la cita y antigüedad se probaron sin red y se midieron sobre vistas previas de 500
+  caracteres ya anotadas. La foto de ramas añade ~430 ms por corrida con 4 repos (una máquina).
 - Knowledge que puede quedar viejo con citas válidas: `knowledge check` distingue inexistente,
   ambigua, símbolo movido y símbolo ausente, pero el aviso por commit de origen
   (`fuente_desactualizada`, `docs/diseño-ciclo5-knowledge-init.md` §5) no está en el CLI.
@@ -327,8 +347,10 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
 - `minka stats --month AAAA-MM`: corridas, tokens, caché, costo frente a baseline, rutas, vueltas con
   tope, cierres recortados, citas no encontradas / verificadas, afirmaciones sin respaldo, "(doc)",
   salidas cortadas y `prompt_hash`. Hoy: 677 citas verificadas y 17 no encontradas; 16 afirmaciones
-  sin respaldo de 193.
-- `minka evals routing --runs 3`: 53 casos, mide empty_plan, acuerdo y estabilidad (cuesta ~$0.19).
+  sin respaldo de 193. Desde 0.2.4 `stats` muestra ambos contadores de citas (antiguo
+  `no encontradas/total` y nuevo `símbolo ok/lejano/ausente`) y `riesgos sin catálogo`; los números
+  antiguos no son comparables con el nuevo sin el contador antiguo.
+- `minka evals routing --runs 3`: casos `eval=info` de los 64 golden, mide empty_plan, acuerdo y estabilidad (cuesta ~$0.19).
 - `minka knowledge check --project P`: citas del knowledge; hoy 292 citas, 216 ok, 9 inexistentes.
 - `minka knowledge scan --project P`: secretos en knowledge; en el proyecto en uso 0 fallos, 9 a
   revisar y 7 ejemplos por lista (valores de prueba de los manuales).
@@ -342,7 +364,7 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
 - **Línea base**: `prompt_hash` = sha256 de prompts + schemas de tools + modelos
   (`core/baseline.py:32-41`). Igual hash ⇔ misma línea base; todos los cambios de los últimos ciclos
   la dejaron en el mismo valor (escaner_cierre, 59 corridas del mes lo llevan).
-- Suite: `uv run pytest` → 611 tests (63 archivos); `ruff check` limpio.
+- Suite: `uv run pytest` → 770 tests (71 archivos, 1 skip sin `uv`); `ruff check` limpio.
 
 ## 11. Pendientes y decisiones abiertas
 
@@ -354,14 +376,19 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
   reporte del set de oro (medición antes/después con tope).
 - `fuente_desactualizada` en `knowledge check` y soporte node en `knowledge init` (diseño ciclo 5).
 - Formato de ruff pendiente en 62 archivos (`ruff format --check`).
-- Hechos en el lote 6 (sin publicar): suite hermética, `--version`, resultado parcial ante fallos de
+- Hechos en el lote 6 (0.2.2): suite hermética, `--version`, resultado parcial ante fallos de
   red/timeout/throttling/credenciales, CI en GitHub Actions (no ejecutado aún: cuota de Actions en
   repo privado **no verificada**), `scripts/release.sh` / `rollback.sh` probados contra un repo
   temporal, `minka trace`, retención de `agent_runs.jsonl`, tamaños en `doctor`, `docs/OPERACION.md`.
-- Hechos en el lote 5 (sin publicar): `ka`/`--agent` breve con consulta simple, `inherit_repo`,
+- Hechos en el lote 5 (0.2.3): `ka`/`--agent` breve con consulta simple, `inherit_repo`,
   tope de sesión y ráfaga (`BudgetGate`, exit 3 sin TTY), estimado previo en la línea de decisión,
   `/mal` + `evals routing --from-feedback`, aviso de tope diario en `stats`/`doctor`. Medición de
   los dos primeros con una muestra por par (sección 9); el resto solo con pruebas sin red.
+- Hechos en el paso 12 (0.2.4): ids `R-nn` contra el catálogo, duraciones con procedencia, símbolo
+  cerca de la cita con contadores nuevos junto a los antiguos, antigüedad del contexto
+  (`CONTEXT_STALE_DAYS`), rama por repo con la nota "Búsqueda sobre", saludo + texto, `/mal` con
+  corchetes literales, consistencia por `run_id` y estimado por (ruta, pasos). La parte 2 quedó dentro
+  del commit `0285a45`, titulado como la parte 1. Pendiente: medir sobre respuestas completas.
 - Ideas anotadas sin abrir: skills por proyecto, detección de contradicciones entre pasos de un plan.
 
 ## 12. Cómo usarlo bien
@@ -372,8 +399,10 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
    Si quieres el análisis completo, pide "en detalle" o usa `--completo`.
 3. Pide reporte solo cuando ya hubo análisis en la sesión: el reporte redacta sobre eso y no inventa.
 4. Tras un plan de varios pasos, `/detalle` muestra la investigación; `/detalle N` la del pedido N.
-5. Verifica en el código lo importante: `⚠ no existe` y `⚠ sin respaldo` marcan lo que no se pudo
-   comprobar; "(doc)" indica que solo está en el knowledge.
+5. Verifica en el código lo importante: `⚠ no existe`, `⚠ símbolo a N líneas`, `⚠ sin respaldo` y
+   `⚠ sin fuente` marcan lo que no se pudo comprobar; "(doc)" y "(solo knowledge: …)" indican que solo
+   está en el knowledge; "(entrada del <fecha>; verifica en el código)" avisa de contexto viejo.
+   Si lees "Búsqueda sobre: pos@rama…", la ausencia se afirmó sobre una rama distinta de master.
 6. Arranca el día con la pregunta más simple: la primera consulta paga la caché fría.
 7. Mantén `active-context/<proyecto>.md` corto y sin secretos: viaja en cada consulta.
 8. Revisa `minka stats` al cerrar; si aparece más de un `prompt_hash`, las comparaciones de costo no valen.
@@ -390,6 +419,7 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
 | Pregunta simple ≈ $0.10 con caché caliente | escaner_final B1 | medido n=5 |
 | Caché fría multiplica por ~4 | escaner_cierre C | medido n=1 |
 | Citas se verifican y anotan | `citation_check.py`, `tests/test_citation_check.py`, B4 | verificado · medido n=15 |
+| Símbolo cerca de la cita, R-nn, duraciones, antigüedad del contexto, ramas (paso 12) | `tests/test_paso12_parte1.py`, `tests/test_paso12_parte2.py`; previews de 500 caracteres (26/322 citas cambiarían) | verificado en tests · no medido en respuestas completas |
 | Afirmaciones se verifican contra repos, paso previo y knowledge | `claim_check.py`, 40 tests | verificado · medido n=1 |
 | Solo se imprime el último paso; /detalle muestra el resto | `orchestrator.py:186-201`, `tests/test_hidden_investigation.py` | verificado · medido n=1 |
 | Escrituras siempre con confirmación | `approval_gate.py:1-4`, `config.py:126` | verificado |

@@ -58,7 +58,7 @@ Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
   útil ni acierto de evals, la CLI sale con 1 y el REPL sigue. `TypeError` y Ctrl-C suben.
 
 **Router (`core/orchestrator/router.py`), capas en orden:** saludo/estado/meta/ambiguo
-(costo 0) → `inherit_repo` ("¿y en el repo hsm?" tras una consulta útil de architecture con citas:
+(costo 0; un saludo seguido de texto enruta el resto y sin señal de tarea es `ambiguous`) → `inherit_repo` ("¿y en el repo hsm?" tras una consulta útil de architecture con citas:
 repite el análisis sobre ese alias, sin planner) → `info_direct` si `PLANNER_SKIP_INFO=true` y el pedido es una pregunta de
 información simple (architecture directo, sin planner) → planner LLM con reglas duras
 (`no_plan`, `planner_error`, `followup_change`, `inherit`, `no_changes`). "¿En qué
@@ -70,7 +70,20 @@ quedamos?" al abrir la sesión responde con el contexto vivo sin modelo.
   primer bloque del mensaje user (nunca en el system). Topes `LIVE_CONTEXT_MAX_LINES` /
   `LIVE_CONTEXT_MAX_TOKENS`; aviso si supera `LIVE_CONTEXT_STALE_DAYS`.
 - `CITATION_CHECK_ENABLED` (default true): las citas de la respuesta se verifican contra
-  REPOS y se anotan `⚠ no existe`; el texto anotado es el que hereda la memoria.
+  REPOS y se anotan `⚠ no existe`; el texto anotado es el que hereda la memoria. Paso 12: si la
+  línea trae un identificador en backticks (con mayúscula, `_` o `.`), debe estar a ≤ `SYMBOL_WINDOW`
+  (5) líneas de la citada: `⚠ símbolo a N líneas` / `⚠ símbolo no está en el archivo`. Contadores
+  `citations_ok/symbol_far/symbol_absent` junto a los antiguos `citations_total/missing`.
+- **Verificador de afirmaciones** (`core/orchestrator/claim_check.py`, paso 12): ids `R-nn` contra el
+  `risk_catalog.md` del proyecto (`(doc: risk_catalog.md)` / `⚠ id inexistente en el catálogo`);
+  duraciones con procedencia (sin marca si están en el repo, `(solo knowledge: archivo:línea)`,
+  `⚠ sin fuente`); fechas y ADR de `team/session_log.md` y `team/decisions_log.md` como evidencia
+  (nunca en el prompt) con `CONTEXT_STALE_DAYS` (30): `(entrada del <fecha>; verifica en el código)`;
+  "inconsistente con la corrida anterior" solo entre corridas distintas. `evals quality` puntúa sobre el
+  texto sin marcas (`strip_marks`).
+- **Ramas por repo** (`core/tools/git/branches.py`, git local sin red, ~430 ms con 4 repos): foto por
+  corrida en `/status` y en el resumen (stderr). Si la respuesta niega algo y un repo no está en master
+  (o main), termina con `_Búsqueda sobre: pos@rama (+N sobre master)…_`. Nunca al modelo.
 
 **Si hay error de sesión AWS:**
 ```bash
@@ -79,7 +92,7 @@ aws sso login --profile bedrock
 Luego: `minka`
 
 **Comandos disponibles dentro del chat:**
-- `/status`  → estado del sistema (sesión AWS, backend, repos, memoria, $ de la sesión, nivel)
+- `/status`  → estado del sistema (sesión AWS, backend, repos, ramas y distancia a master, memoria, $ de la sesión, nivel)
 - `/clear`   → limpia el historial de la sesión
 - `/mal [agente] [nota]` → marca la última decisión del router como equivocada (ver Freno de gasto arriba)
 - `salir`    → termina la sesión
