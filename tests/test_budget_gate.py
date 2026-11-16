@@ -167,7 +167,7 @@ def test_forzado_tambien_pasa_por_el_gate(orch, monkeypatch):
 
 
 def test_estimado_en_la_linea_y_confirmacion_si_supera_050(orch):
-    orch.orch.route_medians_fn = lambda: {"llm": (0.80, 12)}
+    orch.orch.route_medians_fn = lambda: {"llm/2": (0.80, 12)}
     orch.t += 10
     with pytest.raises(budget.BudgetGate) as exc:
         orch.orch.run(PLAN)
@@ -184,14 +184,14 @@ def test_estimado_en_la_linea_y_confirmacion_si_supera_050(orch):
 
 
 def test_sin_datos_suficientes_dice_sin_estimado_y_no_pregunta(orch):
-    orch.orch.route_medians_fn = lambda: {"llm": (0.80, 4)}
+    orch.orch.route_medians_fn = lambda: {"llm/2": (0.80, 4)}
     orch.t += 10
     orch.orch.run(PLAN)
     assert "sin estimado" in orch.lines[-1] and "~$" not in orch.lines[-1]
 
 
 def test_estimado_bajo_el_umbral_no_pregunta_salvo_que_rompa_el_tope(orch, monkeypatch):
-    orch.orch.route_medians_fn = lambda: {"llm": (0.20, 9)}
+    orch.orch.route_medians_fn = lambda: {"llm/2": (0.20, 9)}
     orch.t += 10
     orch.orch.run(PLAN)
     assert "estimado ~$0.20 (mediana de 9 corridas)" in orch.lines[-1]
@@ -206,7 +206,7 @@ def test_estimado_bajo_el_umbral_no_pregunta_salvo_que_rompa_el_tope(orch, monke
 
 
 def test_info_direct_inherit_y_capas_cero_sin_estimado(orch):
-    orch.orch.route_medians_fn = lambda: {"info_direct": (0.10, 50), "inherit": (0.05, 9), "llm": (0.3, 9)}
+    orch.orch.route_medians_fn = lambda: {"info_direct/1": (0.10, 50), "inherit/1": (0.05, 9), "llm/2": (0.3, 9)}
     orch.t += 10
     orch.orch.run(PREGUNTA)
     assert "estimado" not in orch.lines[-1]

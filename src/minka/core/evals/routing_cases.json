@@ -456,15 +456,18 @@
     {
       "id": "buenas_tardes_equipo",
       "request": "buenas tardes equipo",
-      "llm": [],
       "expect": {
         "agents": [],
-        "router": "no_plan",
-        "llm_called": true,
+        "router": "ambiguous",
+        "llm_called": false,
         "reply_contains": [
-          "No identifiqué una tarea"
+          "Tu pedido es ambiguo"
+        ],
+        "line_contains": [
+          "→ sin agente (ambiguo: precisa el pedido)"
         ]
-      }
+      },
+      "_nota": "Saludo + texto sin señal de tarea: pide precisar a $0 (antes iba al planner y caía en no_plan)."
     },
     {
       "id": "ok_perfecto",
@@ -1058,6 +1061,72 @@
         "router": "inherit_repo",
         "llm_called": false,
         "confidence": "media"
+      }
+    },
+    {
+      "id": "saludo_mas_pregunta_es_info_direct",
+      "request": "hola, ¿dónde se resuelve el token?",
+      "expect": {
+        "agents": [
+          "architecture_agent"
+        ],
+        "router": "info_direct",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "saludo_estoy_de_vuelta_es_ambiguo",
+      "request": "hola minka, estoy de vuelta",
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "reply_contains": [
+          "Tu pedido es ambiguo"
+        ],
+        "line_contains": [
+          "saludo sin tarea"
+        ]
+      }
+    },
+    {
+      "id": "saludo_retomemos_es_ambiguo",
+      "request": "buenas, retomemos lo de ayer",
+      "turns": [
+        {
+          "request": "analiza el flujo de pagos",
+          "agents": [
+            "architecture_agent"
+          ]
+        }
+      ],
+      "expect": {
+        "agents": [],
+        "router": "ambiguous",
+        "llm_called": false,
+        "reply_contains": [
+          "Tu pedido es ambiguo"
+        ]
+      }
+    },
+    {
+      "id": "saludo_mas_estado",
+      "request": "hola, ¿en qué quedamos?",
+      "turns": [
+        {
+          "request": "analiza el flujo de pagos",
+          "agents": [
+            "architecture_agent"
+          ]
+        }
+      ],
+      "expect": {
+        "agents": [],
+        "router": "state",
+        "llm_called": false,
+        "reply_contains": [
+          "analiza el flujo de pagos"
+        ]
       }
     }
   ]

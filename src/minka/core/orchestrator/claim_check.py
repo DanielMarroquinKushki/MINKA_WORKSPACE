@@ -30,6 +30,11 @@ MARK_TRUNCATED = "_⚠ Respuesta cortada por tope de tokens (MAX_TOKENS)._"
 MARK_INFERRED = "(inferido sin herramienta"
 MARK_RUNTIME = "(depende de runtime)"
 MARK_INCONSISTENT = "⚠ inconsistente con la corrida anterior"
+MARK_NO_SOURCE = "⚠ sin fuente"  # duración/plazo que no está en los repos ni en el knowledge
+MARK_DOC_ONLY = "(solo knowledge"  # duración que solo aparece en knowledge/extracted|learning
+MARK_DOC_RISK = "(doc: risk_catalog.md)"
+MARK_RISK_MISSING = "⚠ id inexistente en el catálogo"
+_REUNION_RE = re.compile(r"reuni[oó]n", re.IGNORECASE)
 
 MAX_TOKENS_CHECKED = 120  # tope de consultas a los repos por respuesta
 GREP_TIMEOUT = 10
@@ -60,8 +65,26 @@ _NUMBER_RES = (
     ("kcv", re.compile(r"\bKCV\b\s*[:=]?\s*`?([0-9A-Fa-f]{4,6})\b", re.IGNORECASE)),
     ("hex", re.compile(r"\b(?=[0-9A-Fa-f]*[A-Fa-f])(?=[0-9A-Fa-f]*\d)[0-9A-Fa-f]{6,}\b")),
     ("id", re.compile(r"\b\d{6,}\b")),
-    ("plazo", re.compile(r"\b\d+\s*(?:d[ií]as?|horas?|minutos?|segundos?|semanas?|meses|a[ñn]os?|ms)\b", re.IGNORECASE)),
+    # Duraciones: "300 s", "1800 s", "5 min", "2.5 h", "30s", "5m", "1h", "3 días", "2 semanas".
+    (
+        "plazo",
+        re.compile(
+            r"\b\d+(?:\.\d+)?\s*(?:s|seg|segundos?|ms|min|minutos?|h|horas?|d[ií]as?|semanas?|meses|a[ñn]os?)\b"
+            r"|\b\d+[smh]\b",
+            re.IGNORECASE,
+        ),
+    ),
 )
+# Marcas que añade este verificador al final de la línea; `strip_marks` las quita (evals quality).
+_MARKS_RE = re.compile(
+    r"\s*(?:" + "|".join(re.escape(m) for m in (MARK_NO_SOURCE, MARK_RISK_MISSING, MARK_UNSUPPORTED, MARK_INCONSISTENT))
+    + r")[^\n]*|\s*\((?:solo knowledge|doc|inferido sin herramienta|depende de runtime)[^)\n]*\)"
+)
+
+
+def strip_marks(text: str) -> str:
+    """Texto sin las anotaciones del verificador (para puntuar evals igual que sin verificador)."""
+    return _MARKS_RE.sub("", text or "")
 
 
 @dataclass
@@ -82,6 +105,11 @@ class ClaimResult:
     claims_inferred: int = 0  # herramienta nombrada que el agente no ejecutó en este paso
     runtime_strings: int = 0  # cadenas con placeholders: "depende de runtime", no hallazgo
     claims_inconsistent: int = 0  # misma cita que una corrida anterior, valores distintos
+    risks_checked: int = 0  # ids R-nn contra el risk_catalog.md del proyecto
+    risks_unsupported: int = 0
+    durations_checked: int = 0  # plazos/duraciones: código, solo knowledge o sin fuente
+    durations_doc_only: int = 0
+    durations_unsupported: int = 0
     unsupported_tokens: list[str] = field(default_factory=list)
 
     @property
@@ -101,11 +129,16 @@ class Evidence:
     distinguir mayúsculas: `workingKey` cuenta si el código tiene `WorkingKey`) y, en último
     lugar, el knowledge del proyecto (extracted + learning), que se marca "(doc)"."""
 
-    def __init__(self, index: cit.RepoIndex | None, previous: list[str], docs: str = ""):
+    def __init__(self, index: cit.RepoIndex | None, previous: list[str], docs: "str | list[tuple[str, int, str]]" = ""):
         self.roots = list(index.roots.values()) if index is not None else []
         self.previous = "\n".join(p for p in previous if p)
-        self.docs = docs or ""
-        self.docs_lower = self.docs.lower()
+        # docs: lista (archivo relativo al knowledge, línea, texto); un str (tests) se parte en líneas.
+        if isinstance(docs, str):
+            self.docs = [("knowledge", i, line) for i, line in enumerate(docs.splitlines(), 1)] if docs else []
+        else:
+            self.docs = list(docs or [])
+        self.docs_lower = "\n".join(line.lower() for _, _, line in self.docs)
+        self.doc_where: dict[str, str] = {}  # token → "archivo:línea" de su primera aparición
         self._cache: dict[str, str | None] = {}
         self.lookups = 0
 
@@ -125,6 +158,11 @@ class Evidence:
             kind = SUPPORT_REPO
         elif token.lower() in self.docs_lower:
             kind = SUPPORT_DOC
+            low = token.lower()
+            for path, n, line in self.docs:
+                if low in line.lower():
+                    self.doc_where[token] = f"{path}:{n}"
+                    break
         self._cache[token] = kind
         return kind
 
@@ -154,21 +192,42 @@ def _grep_repo(root: Path, token: str, ignore_case: bool = False) -> bool:
         return False
 
 
-def load_project_docs(knowledge_dir: Path | None, subdirs: tuple[str, ...] = ("extracted", "learning")) -> str:
-    """Texto de los .md de knowledge/<extracted|learning> (solo lectura; '' si no hay)."""
+def load_project_docs(
+    knowledge_dir: Path | None, subdirs: tuple[str, ...] = ("extracted", "learning")
+) -> list[tuple[str, int, str]]:
+    """Líneas (archivo relativo al knowledge, nº de línea, texto) de los .md de
+    knowledge/<extracted|learning>; [] si no hay. Solo lectura."""
     if knowledge_dir is None:
-        return ""
-    parts: list[str] = []
+        return []
+    out: list[tuple[str, int, str]] = []
     for sub in subdirs:
         base = Path(knowledge_dir) / sub
         if not base.is_dir():
             continue
         for f in sorted(base.rglob("*.md")):
             try:
-                parts.append(f.read_text(encoding="utf-8", errors="ignore"))
+                text = f.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 continue
-    return "\n".join(parts)
+            rel = f.relative_to(knowledge_dir).as_posix()
+            out.extend((rel, i, line) for i, line in enumerate(text.splitlines(), 1))
+    return out
+
+
+def load_risk_ids(knowledge_dir: Path | None) -> set[str] | None:
+    """Ids R-nn de los risk_catalog.md bajo knowledge/; None si el proyecto no tiene catálogo
+    (entonces no se marca nada)."""
+    if knowledge_dir is None or not Path(knowledge_dir).is_dir():
+        return None
+    ids: set[str] = set()
+    found = False
+    for catalog in sorted(Path(knowledge_dir).rglob(cit.RISK_CATALOG_NAME)):
+        found = True
+        try:
+            ids.update(cit.RISK_ID_RE.findall(catalog.read_text(encoding="utf-8", errors="ignore")))
+        except OSError:
+            continue
+    return ids if found else None
 
 
 def _looks_like_identifier(token: str, tool_names: frozenset[str] = frozenset()) -> bool:
@@ -192,15 +251,23 @@ def _block_identifiers(code: str) -> set[str]:
     return out
 
 
-def _numbers_in(line: str, today: str) -> list[str]:
-    found = []
+def _numbers_with_kind(line: str, today: str) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for kind, rx in _NUMBER_RES:
         for m in rx.finditer(line):
             token = m.group(1) if kind == "kcv" else m.group(0)
             if kind == "fecha" and token == today:
                 continue
-            found.append(token)
+            if token in seen:
+                continue
+            seen.add(token)
+            found.append((kind, token))
     return found
+
+
+def _numbers_in(line: str, today: str) -> list[str]:
+    return [token for _, token in _numbers_with_kind(line, today)]
 
 
 def verify(
@@ -215,6 +282,8 @@ def verify(
     tools_used: set[str] | None = None,
     consistency: "ConsistencyMemory | None" = None,
     question: str | None = None,
+    risk_ids: set[str] | None = None,
+    run_id: str | None = None,
 ) -> ClaimResult:
     """Texto anotado + contadores. Sin texto devuelve el mismo texto. `decisions`: id → fecha del
     historial del proyecto. `tool_names`: nombres de tools del motor (no se verifican en repos);
@@ -227,6 +296,7 @@ def verify(
     evidence.decisions = decisions or {}
     evidence.tool_names = tool_names or frozenset()
     evidence.tools_used = tools_used
+    evidence.risk_ids = risk_ids
     today = today or date.today().isoformat()
     lines = text.split("\n")
     out: list[str] = []
@@ -259,12 +329,13 @@ def verify(
         if proposed_section:
             out.append(line)
         else:
-            out.append(_annotate_decisions(_annotate_line(line, evidence, result, today), evidence, result))
+            annotated = _annotate_decisions(_annotate_line(line, evidence, result, today), evidence, result)
+            out.append(_annotate_risks(annotated, evidence, result))
     if truncated:
         out.append("")
         out.append(MARK_TRUNCATED)
     if consistency is not None and question:
-        out = consistency.check_and_record(question, out, result)
+        out = consistency.check_and_record(question, out, result, run_id=run_id)
     result.text = "\n".join(out)
     return result
 
@@ -275,6 +346,7 @@ class ConsistencyMemory:
 
     def __init__(self) -> None:
         self._seen: dict[str, dict[str, frozenset[str]]] = {}
+        self._run_of: dict[str, str | None] = {}  # pregunta → run_id de la última corrida registrada
 
     @staticmethod
     def normalize(question: str) -> str:
@@ -301,11 +373,16 @@ class ConsistencyMemory:
                 out[c] = frozenset(values) | out.get(c, frozenset())
         return out
 
-    def check_and_record(self, question: str, lines: list[str], result: ClaimResult) -> list[str]:
+    def check_and_record(
+        self, question: str, lines: list[str], result: ClaimResult, run_id: str | None = None
+    ) -> list[str]:
+        """Compara con lo registrado por una corrida ANTERIOR de la misma pregunta. Los pasos de
+        un mismo plan (mismo run_id) solo se acumulan: no son "la corrida anterior"."""
         key = self.normalize(question)
         current = self.values_by_citation(lines)
         previous = self._seen.get(key)
-        if previous:
+        same_run = run_id is not None and self._run_of.get(key) == run_id
+        if previous and not same_run:
             out = []
             for line in lines:
                 cites = [m.group(0) for m in cit.CITATION_RE.finditer(line) if m.group(2)]
@@ -318,10 +395,12 @@ class ConsistencyMemory:
         merged = dict(previous or {})
         merged.update(current)
         self._seen[key] = merged
+        self._run_of[key] = run_id
         return lines
 
     def clear(self) -> None:
         self._seen.clear()
+        self._run_of.clear()
 
 
 def _check_block(block: list[str], lang: str, proposed: bool, evidence: Evidence, result: ClaimResult) -> str | None:
@@ -373,8 +452,28 @@ def _annotate_decisions(line: str, evidence: Evidence, result: ClaimResult) -> s
     return out
 
 
+def _annotate_risks(line: str, evidence: Evidence, result: ClaimResult) -> str:
+    """Ids R-nn contra el risk_catalog.md del proyecto (si el proyecto tiene catálogo)."""
+    known: set[str] | None = getattr(evidence, "risk_ids", None)
+    if known is None or MARK_DOC_RISK in line or MARK_RISK_MISSING in line:
+        return line
+    ids = list(dict.fromkeys(cit.RISK_ID_RE.findall(line)))
+    if not ids:
+        return line
+    result.risks_checked += len(ids)
+    missing = [r for r in ids if r not in known]
+    out = line.rstrip()
+    if len(missing) < len(ids):
+        out = f"{out} {MARK_DOC_RISK}"
+    if missing:
+        result.risks_unsupported += len(missing)
+        result.unsupported_tokens.extend(missing)
+        out = f"{out} {MARK_RISK_MISSING}: {', '.join(missing)}"
+    return out
+
+
 def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: str) -> str:
-    if MARK_UNSUPPORTED in line:
+    if MARK_UNSUPPORTED in line or MARK_NO_SOURCE in line:
         return line
     missing: list[str] = []
     doc_only: list[str] = []
@@ -407,7 +506,27 @@ def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: st
         elif kind == SUPPORT_DOC:
             doc_only.append(token)
     masked = _BACKTICK_RE.sub(lambda m: " " * len(m.group(0)), line)
-    for token in _numbers_in(masked, today):
+    no_source: list[str] = []  # duraciones sin fuente
+    doc_durations: list[str] = []  # duraciones solo en knowledge, con archivo:línea
+    skip_durations = bool(_REUNION_RE.search(line))  # "la reunión de 30 min" no es un plazo del código
+    for number_kind, token in _numbers_with_kind(masked, today):
+        if number_kind == "plazo":
+            if skip_durations:
+                continue
+            result.durations_checked += 1
+            kind = evidence.support(token)
+            if kind is None:
+                result.numbers_checked += 1
+                result.numbers_unsupported += 1
+                result.durations_unsupported += 1
+                no_source.append(token)
+            elif kind == SUPPORT_DOC:
+                result.numbers_checked += 1
+                result.durations_doc_only += 1
+                doc_durations.append(f"{token} → {evidence.doc_where.get(token, 'knowledge')}")
+            else:
+                result.numbers_checked += 1  # (código): sin marca
+            continue
         result.numbers_checked += 1
         kind = evidence.support(token)
         if kind is None:
@@ -415,9 +534,14 @@ def _annotate_line(line: str, evidence: Evidence, result: ClaimResult, today: st
             missing.append(token)
         elif kind == SUPPORT_DOC:
             doc_only.append(token)
-    if not missing and not doc_only and not inferred and not runtime:
+    if not missing and not doc_only and not inferred and not runtime and not no_source and not doc_durations:
         return line
     out = line.rstrip()
+    if doc_durations:
+        out = f"{out} {MARK_DOC_ONLY}: {'; '.join(dict.fromkeys(doc_durations))})"
+    if no_source:
+        result.unsupported_tokens.extend(no_source)
+        out = f"{out} {MARK_NO_SOURCE}: {', '.join(dict.fromkeys(no_source))}"
     if runtime:
         out = f"{out} {MARK_RUNTIME}"
     if inferred:

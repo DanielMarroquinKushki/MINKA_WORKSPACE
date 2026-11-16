@@ -228,7 +228,7 @@ def test_route_y_end_con_reglas_descartadas(orch, monkeypatch):
     route, end = events
     assert route["router"] == "info_direct" and route["confidence"] == "alta"
     assert route["evaluated"] == [
-        "small_talk", "state", "meta", "review", "followup_change", "inherit_repo", "ambiguous",
+        "small_talk", "greeting", "state", "meta", "review", "followup_change", "inherit_repo", "ambiguous",
     ]
     assert end["ok"] is True and end["interrupted"] == 0 and isinstance(end["duration_ms"], int)
     assert trace_log.list_runs(config)[-1] == orch.trace.path

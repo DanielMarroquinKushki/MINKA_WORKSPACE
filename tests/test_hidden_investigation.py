@@ -247,8 +247,9 @@ def test_load_project_docs_lee_extracted_y_learning(tmp_path):
     (tmp_path / "learning" / "b.md").write_text("beta")
     (tmp_path / "team" / "c.md").write_text("gamma")
     docs = cc.load_project_docs(tmp_path)
-    assert "alfa" in docs and "beta" in docs and "gamma" not in docs
-    assert cc.load_project_docs(None) == "" and cc.load_project_docs(tmp_path / "no") == ""
+    assert ("extracted/a.md", 1, "alfa") in docs and ("learning/b.md", 1, "beta") in docs
+    assert not any(line == "gamma" for _, _, line in docs)
+    assert cc.load_project_docs(None) == [] and cc.load_project_docs(tmp_path / "no") == []
 
 
 def test_cita_inexistente_sugiere_basename_parecido(index):

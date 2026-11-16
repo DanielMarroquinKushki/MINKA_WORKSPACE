@@ -248,6 +248,9 @@ def _symbol_near(path: str, lines: list[int], symbol: str) -> bool:
 
 
 def score(case: EvalCase, output: str, repos: dict) -> RunResult:
+    from minka.core.orchestrator.claim_check import strip_marks
+
+    output = strip_marks(output)  # las anotaciones del verificador no cambian la puntuación
     roots = _roots(repos)
     exp = case.expect or {}
     cited = cited_files(output, roots)

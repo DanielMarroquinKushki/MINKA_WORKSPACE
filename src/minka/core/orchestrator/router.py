@@ -121,7 +121,8 @@ class RouteDecision:
 
 # Orden de las reglas locales de `local_decision`; si ninguna aplica, el pedido va al planner.
 LOCAL_RULES = (
-    "small_talk", "state", "meta", "review", "followup_change", "inherit_repo", "ambiguous", "info_direct",
+    "small_talk", "greeting", "state", "meta", "review", "followup_change", "inherit_repo", "ambiguous",
+    "info_direct",
 )
 
 
@@ -345,6 +346,38 @@ def is_useful_result(text: str) -> bool:
 
 
 # -- Capa 1: respuestas deterministas ------------------------------------------
+_GREETING_RE = re.compile(
+    r"^\s*(?:hola|buenas|buenos d[ií]as|buenas tardes|buenas noches|hey|hi|hello)"
+    rf"(?:\s+{re.escape(APP_NAME)})?(?:\s+(?:equipo|a todos|de nuevo))?[\s,.;:!¡\-–—]+",
+    re.IGNORECASE,
+)
+
+
+def strip_greeting(request: str) -> str | None:
+    """Texto que sigue a un saludo inicial ("hola, ¿dónde…?" → "¿dónde…?"); None si no hay
+    saludo o si no hay nada detrás (eso lo atiende small_talk)."""
+    m = _GREETING_RE.match(request or "")
+    if not m:
+        return None
+    rest = request[m.end():].strip()
+    return rest or None
+
+
+def has_task_signal(request: str, repos: dict | None = None) -> bool:
+    """Algo que enrutar: palabra clave, pregunta, código, diff, reporte, verbo o fallo."""
+    low = _normalize(request)
+    return bool(
+        _keyword_hit(request)
+        or re.search(_QUERY_WORDS, low)
+        or is_information_question(request)
+        or has_code_reference(request, repos)
+        or has_diff_reference(request)
+        or asks_report(request)
+        or has_write_verb(request)
+        or has_failure(request)
+    )
+
+
 def small_talk_reply(request: str, agent_names: tuple[str, ...]) -> str | None:
     """Texto fijo si el pedido es solo un saludo/agradecimiento; None si no."""
     text = _normalize(request)
@@ -399,6 +432,20 @@ def local_decision(
     if reply:
         return RouteDecision("small_talk", "saludo", reply=reply, confidence="alta", evaluated=tried)
     tried.append("small_talk")
+    # Saludo + texto ("hola minka, estoy de vuelta"): se enruta lo que sigue al saludo; si no trae
+    # ninguna señal de tarea, pide precisar ($0) en vez de ir al planner.
+    rest = strip_greeting(request)
+    if rest is not None:
+        inner = local_decision(rest, session_turns, agent_names, repos)
+        if inner is not None:
+            inner.evaluated = tried + ["greeting"] + inner.evaluated
+            return inner
+        if not has_task_signal(rest, repos):
+            return RouteDecision(
+                "ambiguous", "saludo sin tarea: precisa el pedido", reply=ASK_AMBIGUOUS, confidence="baja",
+                evaluated=tried + ["greeting"],
+            )
+    tried.append("greeting")
     reply = state_reply(request, session_turns)
     if reply:
         return RouteDecision("state", "estado de la sesión", reply=reply, confidence="alta", evaluated=tried)

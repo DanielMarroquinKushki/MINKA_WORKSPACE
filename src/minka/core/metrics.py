@@ -138,6 +138,8 @@ def build_run_record(
         # Verificador: herramientas nombradas sin ejecutar e inconsistencias con corridas previas.
         "claims_inferred": int((claims or {}).get("inferred") or 0),
         "claims_inconsistent": int((claims or {}).get("inconsistent") or 0),
+        # Ids R-nn de la respuesta que no existen en el risk_catalog.md del proyecto.
+        "risks_unsupported": int((claims or {}).get("risks_unsupported") or 0),
         # Corridas interrumpidas por red/timeout/throttling/credenciales (parcial) y respuestas vacías.
         "interrupted": int(totals.get("interrupted") or 0),
         "empty_responses": int(totals.get("empty_response") or 0),
@@ -162,9 +164,15 @@ def run_cost_usd(usage: dict) -> float:
     return sum(cost_usd(u) or 0.0 for u in usage.get("per_agent", []))
 
 
-def route_median_counts(month: str | None = None, cfg=None) -> dict[str, tuple[float, int]]:
+def route_key(router: str | None, steps: int) -> str:
+    """Clave del estimado previo: ruta y nº de pasos del plan ("llm/2")."""
+    return f"{router or 'other'}/{int(steps)}"
+
+
+def route_median_counts(month: str | None = None, cfg=None, by_steps: bool = False) -> dict[str, tuple[float, int]]:
     """{ruta: (mediana de cost_usd, corridas)} del mes, solo corridas ok y fuera de EXCLUDED_SOURCES.
-    Datos reales únicamente: sin defaults, sin factores. {} si no hay registros o no se pueden leer."""
+    Con `by_steps`, la clave es `route_key(ruta, len(plan))`: un plan de 2 pasos no se estima con la
+    mediana de los de 1. Datos reales únicamente: sin defaults, sin factores. {} si no hay registros."""
     try:
         records = [
             r for r in read_run_records(month=month or local_day("%Y-%m"), cfg=cfg)
@@ -174,7 +182,8 @@ def route_median_counts(month: str | None = None, cfg=None) -> dict[str, tuple[f
         return {}
     by: dict[str, list[float]] = {}
     for r in records:
-        by.setdefault(r.get("router") or "other", []).append(float(r.get("cost_usd") or 0))
+        key = route_key(r.get("router"), len(r.get("plan") or [])) if by_steps else (r.get("router") or "other")
+        by.setdefault(key, []).append(float(r.get("cost_usd") or 0))
     return {route: (round(statistics.median(costs), 4), len(costs)) for route, costs in by.items() if costs}
 
 
@@ -243,7 +252,7 @@ def aggregate(
     ok = fix_runs = fix_iters = repeated = capped = 0
     claims_checked = claims_unsupported = blocks_proposed = truncated_outputs = claims_doc = 0
     security_excluded = decisions_used = decisions_unsupported = claims_inferred = claims_inconsistent = 0
-    interrupted = empty_responses = 0
+    interrupted = empty_responses = risks_unsupported = 0
     redactions: Counter = Counter()
     offers = closings = cit_total = cit_missing = 0
     routers: Counter = Counter()
@@ -260,6 +269,7 @@ def aggregate(
         decisions_unsupported += r.get("decisions_unsupported") or 0
         claims_inferred += r.get("claims_inferred") or 0
         claims_inconsistent += r.get("claims_inconsistent") or 0
+        risks_unsupported += r.get("risks_unsupported") or 0
         interrupted += r.get("interrupted") or 0
         empty_responses += r.get("empty_responses") or 0
         redactions.update({k: int(v) for k, v in (r.get("redactions") or {}).items()})
@@ -322,6 +332,7 @@ def aggregate(
         "decisions_unsupported": decisions_unsupported,
         "claims_inferred": claims_inferred,
         "claims_inconsistent": claims_inconsistent,
+        "risks_unsupported": risks_unsupported,
         "interrupted": interrupted,
         "empty_responses": empty_responses,
         "truncated_outputs": truncated_outputs,

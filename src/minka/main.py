@@ -281,7 +281,7 @@ def _mark_bad_routing(orchestrator, rest: str) -> None:
     turns = getattr(getattr(orchestrator, "memory", None), "turns", None) or []
     if not record.get("run_id") or not turns:
         console.print("[yellow]No hay una corrida previa en esta sesión que marcar.[/yellow]")
-        console.print(f"[dim]{rf.USAGE}[/dim]")
+        console.print(rf.USAGE, style="dim", markup=False, highlight=False)  # los [corchetes] son literales
         return
     expected, note = rf.parse_command(rest)
     try:
@@ -1091,7 +1091,8 @@ def stats(
         f"{' · '.join(f'{k} {v}' for k, v in sorted(agg['redactions'].items())) or 0}"
         f"     decisiones usadas: {agg['decisions_used']} · referencias sin respaldo: "
         f"{agg['decisions_unsupported']}     inferidas sin herramienta: {agg['claims_inferred']} · "
-        f"inconsistentes: {agg['claims_inconsistent']}     interrumpidas: {agg['interrupted']} · "
+        f"inconsistentes: {agg['claims_inconsistent']} · riesgos sin catálogo: {agg['risks_unsupported']}     "
+        f"interrumpidas: {agg['interrupted']} · "
         f"respuestas vacías: {agg['empty_responses']}[/dim]"
     )
     hashes = agg.get("prompt_hashes") or {}

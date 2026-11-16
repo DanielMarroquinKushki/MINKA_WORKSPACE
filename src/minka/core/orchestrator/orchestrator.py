@@ -111,12 +111,13 @@ class Orchestrator:
         self.consistency = claim_check.ConsistencyMemory()
         self.investigations: list[dict] = []
         self.last_investigation_line: str | None = None
-        self._docs_cache: tuple[str | None, str] | None = None
+        self._docs_cache: tuple[str | None, list] | None = None
+        self._risk_ids_cache: tuple[str | None, set[str] | None] | None = None
         self.last_citations_missing: int = 0
         # Freno de gasto (budget.py): gasto de la sesión, ráfaga y estimado previo. El reloj se
         # inyecta en tests (`self.budget.clock`); las medianas por ruta se leen una vez por sesión.
         self.budget = budget.BudgetState()
-        self.route_medians_fn = metrics.route_median_counts
+        self.route_medians_fn = lambda: metrics.route_median_counts(by_steps=True)
         self._route_medians: dict[str, tuple[float, int]] | None = None
         self.last_estimate: float | None = None
         self.last_estimate_n: int = 0
@@ -144,12 +145,13 @@ class Orchestrator:
         return self._route_medians
 
     def _estimate(self, decision: router.RouteDecision) -> str | None:
-        """Estimado previo solo para router llm o planes de 2+ pasos: mediana real de esa ruta
-        con al menos ESTIMATE_MIN_RUNS corridas; si no, "sin estimado". None = no aplica."""
+        """Estimado previo solo para router llm o planes de 2+ pasos: mediana real de la clave
+        (ruta, nº de pasos) con al menos ESTIMATE_MIN_RUNS corridas; si no, "sin estimado".
+        None = no aplica."""
         self.last_estimate, self.last_estimate_n = None, 0
         if decision.router != "llm" and len(decision.agents) < 2:
             return None
-        median, n = self._medians().get(decision.router, (None, 0))
+        median, n = self._medians().get(metrics.route_key(decision.router, len(decision.agents)), (None, 0))
         if median is not None and n >= int(getattr(config, "ESTIMATE_MIN_RUNS", 5)):
             self.last_estimate, self.last_estimate_n = float(median), int(n)
         else:
@@ -171,7 +173,7 @@ class Orchestrator:
         return {
             "checked": 0, "unsupported": 0, "blocks_proposed": 0, "truncated": 0, "doc": 0,
             "decisions_used": 0, "decisions_unsupported": 0,
-            "inferred": 0, "inconsistent": 0,
+            "inferred": 0, "inconsistent": 0, "risks_unsupported": 0,
         }
 
     def _verify_claims(self, result: str, request: str, agent) -> str:
@@ -196,6 +198,8 @@ class Orchestrator:
                 tools_used=tools_used,
                 consistency=self.consistency,
                 question=request,
+                risk_ids=self._risk_ids(),
+                run_id=self.last_run_id,
             )
         except Exception:  # noqa: BLE001 — el verificador nunca rompe la respuesta
             return result
@@ -207,6 +211,7 @@ class Orchestrator:
         self.last_claims["decisions_unsupported"] += checked.decisions_unsupported
         self.last_claims["inferred"] += checked.claims_inferred
         self.last_claims["inconsistent"] += checked.claims_inconsistent
+        self.last_claims["risks_unsupported"] += checked.risks_unsupported
         return checked.text
 
     def _citation_index(self) -> RepoIndex:
@@ -276,13 +281,22 @@ class Orchestrator:
             return self.investigations[-1]
         return next((inv for inv in self.investigations if inv["turn"] == turn), None)
 
-    def _knowledge_text(self) -> str:
-        """Knowledge del proyecto (extracted + learning) para el verificador; una lectura por proyecto."""
+    def _knowledge_text(self) -> list[tuple[str, int, str]]:
+        """Knowledge del proyecto (extracted + learning) para el verificador, como líneas
+        (archivo, nº, texto); una lectura por proyecto."""
         project = getattr(config, "ACTIVE_PROJECT", None)
         if self._docs_cache is None or self._docs_cache[0] != project:
             base = config.PROJECTS_DIR / project / "knowledge" if project else None
             self._docs_cache = (project, claim_check.load_project_docs(base))
         return self._docs_cache[1]
+
+    def _risk_ids(self) -> set[str] | None:
+        """Ids R-nn del risk_catalog.md del proyecto (None si no hay catálogo); una lectura por proyecto."""
+        project = getattr(config, "ACTIVE_PROJECT", None)
+        if self._risk_ids_cache is None or self._risk_ids_cache[0] != project:
+            base = config.PROJECTS_DIR / project / "knowledge" if project else None
+            self._risk_ids_cache = (project, claim_check.load_risk_ids(base))
+        return self._risk_ids_cache[1]
 
     def _hide_steps(self, final: str, plan: list[dict], request: str) -> str:
         """Separa el último paso (se muestra) de la investigación previa (se guarda)."""
