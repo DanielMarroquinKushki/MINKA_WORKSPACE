@@ -276,11 +276,11 @@ METRICS_KEEP_DAYS = int(os.getenv("METRICS_KEEP_DAYS", "90"))
 DOCTOR_SIZE_WARN_MB = int(os.getenv("DOCTOR_SIZE_WARN_MB", "500"))
 # Salud (core/health.py, paso 12b): `stats --salud` y chequeos no bloqueantes de `doctor` sobre los
 # últimos 7 días. Con menos de HEALTH_MIN_N registros por categoría se dice "sin datos suficientes" y
-# nunca se alerta. El costo compara la mediana de 7 días contra los 7 anteriores.
+# nunca se alerta. El costo compara la mediana de 7 días contra los 7 anteriores. Las ausencias
+# refutadas se muestran siempre como informativas (para revisar), sin umbral.
 HEALTH_MIN_N = int(os.getenv("HEALTH_MIN_N", "20"))
 HEALTH_CACHE_MIN = float(os.getenv("HEALTH_CACHE_MIN", "0.80"))
 HEALTH_CITATIONS_MISSING_MAX = float(os.getenv("HEALTH_CITATIONS_MISSING_MAX", "0.05"))
-HEALTH_ABSENCE_REFUTED_MAX = float(os.getenv("HEALTH_ABSENCE_REFUTED_MAX", "0.0"))
 HEALTH_COST_RISE_PCT = float(os.getenv("HEALTH_COST_RISE_PCT", "0.25"))
 
 # Observabilidad (Langfuse): trazas del loop de agentes (tokens/costo/latencia).

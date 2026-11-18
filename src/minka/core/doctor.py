@@ -284,7 +284,7 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
     except Exception:  # noqa: BLE001 — el diagnóstico de salud nunca rompe el doctor
         alerts = []
     for a in alerts:
-        checks.append(Check(a["name"], a["ok"], a["detail"], a["hint"], critical=False))
+        checks.append(Check(a["name"], a["ok"], a["detail"], a["hint"], critical=False, optional=bool(a.get("informative"))))
     return checks
 
 

@@ -4,7 +4,9 @@ Lee output/metrics/runs y evals/response_feedback.jsonl de cada proyecto; nunca 
 Columnas: la semana ISO del ancla (hoy o --semana), las 4 anteriores y la base (baseline_v3.json).
 El n se muestra SIEMPRE; con menos de HEALTH_MIN_N por categoría la cifra se sustituye por "sin datos
 suficientes" (con --crudo se muestra igual, con el aviso "muestra pequeña"). El doctor aplica los
-umbrales HEALTH_* sobre los últimos 7 días contra los 7 anteriores y nunca alerta con poca muestra.
+umbrales HEALTH_* sobre los últimos 7 días contra los 7 anteriores y nunca alerta con poca muestra; las
+ausencias refutadas son siempre informativas ("para revisar"). Un contador ausente en un registro antiguo
+es "sin dato", no 0: ese registro queda fuera del n de esa categoría (`metrics.health_categories`).
 """
 
 from __future__ import annotations
@@ -19,7 +21,6 @@ from minka.core import metrics
 DEFAULT_MIN_N = 20
 DEFAULT_CACHE_MIN = 0.80
 DEFAULT_CITATIONS_MISSING_MAX = 0.05
-DEFAULT_ABSENCE_REFUTED_MAX = 0.0
 DEFAULT_COST_RISE_PCT = 0.25
 WEEKS = 5
 INSUFFICIENT = "sin datos suficientes"
@@ -103,8 +104,20 @@ def load_baseline(cfg) -> dict | None:
     return data if isinstance(data.get("categories"), dict) else None
 
 
+def baseline_filter_matches(baseline: dict | None) -> bool | None:
+    """True si la base se congeló con el mismo filtro de fuentes que las columnas semanales; False si difiere;
+    None si la base no registró su filtro (anterior a 0.2.5) y por tanto no se puede saber."""
+    if not baseline:
+        return None
+    recorded = baseline.get("source_filter")
+    if not isinstance(recorded, dict):
+        return None
+    return recorded == metrics.SOURCE_FILTER
+
+
 def health_table(cfg, anchor: date, weeks: int = WEEKS) -> dict:
-    """{"columns": [{label, start, end, categories}], "baseline": {...}|None}; la semana del ancla primero."""
+    """{"columns": [{label, start, end, categories}], "baseline": {...}|None, "baseline_filter_ok": bool|None};
+    la semana del ancla primero. Las columnas usan metrics.SOURCE_FILTER (ok, sin eval_quality)."""
     columns = []
     for offset in range(0, -weeks, -1):
         start, end = iso_week_range(anchor, offset)
@@ -112,7 +125,8 @@ def health_table(cfg, anchor: date, weeks: int = WEEKS) -> dict:
             {"label": week_label(start), "start": start.isoformat(), "end": end.isoformat(),
              "categories": categories_between(cfg, start, end)}
         )
-    return {"columns": columns, "baseline": load_baseline(cfg)}
+    baseline = load_baseline(cfg)
+    return {"columns": columns, "baseline": baseline, "baseline_filter_ok": baseline_filter_matches(baseline)}
 
 
 def fmt_value(value: float | None, kind: str) -> str:
@@ -176,11 +190,11 @@ def health_alerts(cfg, today: date | None = None) -> list[dict]:
         n = int((cat or {}).get("n") or 0)
         value = (cat or {}).get("value")
         if value is None or n < need:
-            out.append({"name": name, "ok": True, "detail": f"{INSUFFICIENT} (n={n} < {need})", "hint": hint})
+            out.append({"name": name, "ok": True, "informative": False, "detail": f"{INSUFFICIENT} (n={n} < {need})", "hint": hint})
             return
         bad = value > threshold if above_is_bad else value < threshold
         out.append({
-            "name": name, "ok": not bad, "hint": hint,
+            "name": name, "ok": not bad, "informative": False, "hint": hint,
             "detail": f"{fmt_value(value, kind)} (n={n}); umbral {label} {fmt_value(threshold, kind)}, 7 días",
         })
 
@@ -190,21 +204,27 @@ def health_alerts(cfg, today: date | None = None) -> list[dict]:
     add("Citas no encontradas 7 días", cats.get("citas_no_encontradas_pct"), "pct",
         float(getattr(cfg, "HEALTH_CITATIONS_MISSING_MAX", DEFAULT_CITATIONS_MISSING_MAX)), True,
         "Revisa `minka stats --salud`; las citas marcadas ⚠ no existe crecieron.", "máximo")
-    add("Ausencias refutadas 7 días", cats.get("ausencias_refutadas_pct"), "pct",
-        float(getattr(cfg, "HEALTH_ABSENCE_REFUTED_MAX", DEFAULT_ABSENCE_REFUTED_MAX)), True,
-        "La respuesta negó nombres que sí existen en el repo; revisa con `minka stats --salud --crudo`.", "máximo")
+    # Una ausencia refutada es "para revisar", no un error: siempre informativa, nunca alerta ni umbral.
+    abs_cat = cats.get("ausencias_refutadas_pct") or {}
+    abs_n, abs_value = int(abs_cat.get("n") or 0), abs_cat.get("value")
+    out.append({
+        "name": "Ausencias refutadas 7 días", "ok": True, "informative": True,
+        "detail": (f"{INSUFFICIENT} (n={abs_n} < {need})" if abs_value is None or abs_n < need
+                   else f"{fmt_value(abs_value, 'pct')} (n={abs_n}) · para revisar, no es error"),
+        "hint": "Nombres negados que sí existen en el repo; revísalos con `minka stats --salud --crudo`.",
+    })
 
     rise = float(getattr(cfg, "HEALTH_COST_RISE_PCT", DEFAULT_COST_RISE_PCT))
     cur, n_cur = _median_cost(metrics.records_between(start.isoformat(), end.isoformat(), cfg))
     prev, n_prev = _median_cost(metrics.records_between(prev_start.isoformat(), prev_end.isoformat(), cfg))
     hint = "Mira rutas del router y prompt_hash en `minka stats`; ver docs/OPERACION.md §2."
     if cur is None or prev is None or n_cur < need or n_prev < need:
-        out.append({"name": "Costo mediano 7 días", "ok": True, "hint": hint,
+        out.append({"name": "Costo mediano 7 días", "ok": True, "informative": False, "hint": hint,
                     "detail": f"{INSUFFICIENT} (n={n_cur} y {n_prev} < {need})"})
     else:
         pct = (cur - prev) / prev if prev else 0.0
         out.append({
-            "name": "Costo mediano 7 días", "ok": not (prev > 0 and pct > rise), "hint": hint,
+            "name": "Costo mediano 7 días", "ok": not (prev > 0 and pct > rise), "informative": False, "hint": hint,
             "detail": f"${cur:.2f} (n={n_cur}) contra ${prev:.2f} (n={n_prev}) de los 7 anteriores: {pct:+.0%}; umbral +{rise:.0%}",
         })
     return out

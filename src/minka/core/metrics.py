@@ -4,12 +4,14 @@ Un JSONL por día local en OUTPUT_DIR/metrics/runs/. No guarda la tarea ni el
 resultado: esa traza de depuración sigue en output/logs/agent_runs.jsonl.
 """
 
+import fcntl
 import json
 import math
 import os
 import re
 import statistics
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -56,18 +58,48 @@ def mkdir_private(path: Path) -> None:
         pass
 
 
-def append_private(path: Path, line: str) -> None:
-    """Añade una línea a un archivo 0600 dentro de un directorio 0700 (patrón de trace_log)."""
+@contextmanager
+def locked(path: Path):
+    """Cerrojo exclusivo (`fcntl.flock`) sobre `<archivo>.lock` en la misma carpeta: REPL y bridge pueden
+    anexar y reescribir el mismo JSONL a la vez sin perder líneas. El .lock es 0600 y queda vacío."""
     mkdir_private(path.parent)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    fd = os.open(path.with_name(path.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        os.write(fd, (line + "\n").encode("utf-8"))
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def append_private(path: Path, line: str) -> None:
+    """Añade una línea a un archivo 0600 dentro de un directorio 0700 (patrón de trace_log), bajo `locked`."""
+    with locked(path):
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, (line + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+
+
+def replace_private(path: Path, text: str) -> None:
+    """Escritura atómica: temporal 0600 en la misma carpeta + os.replace. Quien lee ve el archivo viejo o el
+    nuevo completo, nunca uno a medias. Llamar con `locked(path)` tomado si hay otros escritores."""
+    mkdir_private(path.parent)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.fsync(fd)
     finally:
         os.close(fd)
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    os.replace(tmp, path)
 
 
 def write_private(path: Path, text: str) -> None:
@@ -277,23 +309,23 @@ def amend_run_record(run_id: str, fields: dict, cfg=None) -> bool:
         if not path.is_file():
             continue
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            # Leer-modificar-reemplazar bajo el mismo cerrojo que usa append_private: otro proceso que
+            # anexe mientras tanto espera, y el reemplazo es atómico (temporal + os.replace).
+            with locked(path):
+                lines = path.read_text(encoding="utf-8").splitlines()
+                for i in range(len(lines) - 1, -1, -1):
+                    try:
+                        rec = json.loads(lines[i])
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("run_id") != run_id:
+                        continue
+                    rec.update(fields)
+                    lines[i] = json.dumps(rec, ensure_ascii=False)
+                    replace_private(path, "\n".join(lines) + "\n")
+                    return True
         except OSError:
             return False
-        for i in range(len(lines) - 1, -1, -1):
-            try:
-                rec = json.loads(lines[i])
-            except json.JSONDecodeError:
-                continue
-            if rec.get("run_id") != run_id:
-                continue
-            rec.update(fields)
-            lines[i] = json.dumps(rec, ensure_ascii=False)
-            try:
-                write_private(path, "\n".join(lines) + "\n")
-            except OSError:
-                return False
-            return True
     return False
 
 
@@ -443,8 +475,21 @@ def _median(values: list[float]) -> float | None:
     return round(statistics.median(values), 4) if values else None
 
 
+SOURCE_FILTER = {"ok_only": True, "excluded_sources": sorted(EXCLUDED_SOURCES)}
+
+
+def _has(record: dict, *keys: str) -> bool:
+    """Un contador que NO está en el registro (versión anterior del motor) es "sin dato", no 0."""
+    return all(k in record for k in keys)
+
+
+def _pct(numerator: int, total: int) -> dict:
+    return {"value": round(numerator / total, 4) if total > 0 else None, "n": max(total, 0)}
+
+
 def health_categories(records: list[dict], feedback: list[dict] | None = None) -> dict[str, dict]:
-    """{categoría: {value, n}} sobre corridas ok sin eval_quality. Solo números. `feedback`: entradas de
+    """{categoría: {value, n}} sobre corridas ok sin eval_quality (SOURCE_FILTER). Solo números. Un registro
+    sin la clave de una categoría queda fuera de su n (no cuenta como 0). `feedback`: entradas de
     response_feedback.jsonl (verdict bien|mal) del mismo rango, para "/bien sobre /bien+/mal"."""
     recs = [r for r in records if r.get("ok") and r.get("source") not in EXCLUDED_SOURCES]
     out: dict[str, dict] = {}
@@ -459,27 +504,27 @@ def health_categories(records: list[dict], feedback: list[dict] | None = None) -
     for key in ("info_direct/1", "llm/1", "llm/2+", "forced/1"):
         vals = by_route.get(key, [])
         out[f"costo_mediano_{key}"] = {"value": _median(vals), "n": len(vals)}
-    caches = [c for c in (cache_ratio(r.get("tokens") or {}) for r in recs) if c is not None]
+    caches = [c for c in (cache_ratio(r.get("tokens") or {}) for r in recs if _has(r, "tokens")) if c is not None]
     out["cache_mediana"] = {"value": _median(caches), "n": len(caches)}
-    with_cit = [r for r in recs if r.get("citations_total")]
+    with_cit = [r for r in recs if _has(r, "citations_total", "citations_missing") and r["citations_total"]]
     total = sum(r["citations_total"] for r in with_cit)
-    out["citas_no_encontradas_pct"] = {
-        "value": round(sum(r.get("citations_missing") or 0 for r in with_cit) / total, 4) if total else None,
-        "n": total,
-    }
-    sym = sum((r.get("citations_symbol_far") or 0) + (r.get("citations_symbol_absent") or 0) for r in with_cit)
-    out["citas_simbolo_lejano_o_ausente_pct"] = {"value": round(sym / total, 4) if total else None, "n": total}
-    n = len(recs)
-    out["interrumpidas_pct"] = {"value": round(sum(1 for r in recs if r.get("interrupted")) / n, 4) if n else None, "n": n}
-    out["vueltas_con_tope_pct"] = {"value": round(sum(1 for r in recs if r.get("iterations_capped")) / n, 4) if n else None, "n": n}
-    out["cierres_con_oferta_pct"] = {"value": round(sum(1 for r in recs if r.get("ends_with_offer")) / n, 4) if n else None, "n": n}
+    out["citas_no_encontradas_pct"] = _pct(sum(r["citations_missing"] for r in with_cit), total)
+    with_sym = [r for r in with_cit if _has(r, "citations_symbol_far", "citations_symbol_absent")]
+    out["citas_simbolo_lejano_o_ausente_pct"] = _pct(
+        sum(r["citations_symbol_far"] + r["citations_symbol_absent"] for r in with_sym),
+        sum(r["citations_total"] for r in with_sym),
+    )
+    for name, key in (("interrumpidas_pct", "interrupted"), ("vueltas_con_tope_pct", "iterations_capped"),
+                      ("cierres_con_oferta_pct", "ends_with_offer")):
+        subset = [r for r in recs if _has(r, key)]
+        out[name] = _pct(sum(1 for r in subset if r[key]), len(subset))
     # Paso 12b parte 2: ausencias refutadas sobre las evaluables (dichas − no evaluables) y /bien sobre /bien+/mal.
-    evaluable = sum((r.get("absences_said") or 0) - (r.get("absences_unclear") or 0) for r in recs)
-    refuted = sum(r.get("absences_refuted") or 0 for r in recs)
-    out["ausencias_refutadas_pct"] = {"value": round(refuted / evaluable, 4) if evaluable > 0 else None, "n": max(evaluable, 0)}
+    with_abs = [r for r in recs if _has(r, "absences_said", "absences_refuted", "absences_unclear")]
+    evaluable = sum(r["absences_said"] - r["absences_unclear"] for r in with_abs)
+    out["ausencias_refutadas_pct"] = _pct(sum(r["absences_refuted"] for r in with_abs), evaluable)
     verdicts = [e.get("verdict") for e in (feedback or []) if e.get("verdict") in ("bien", "mal")]
-    out["bien_sobre_total"] = {"value": round(verdicts.count("bien") / len(verdicts), 4) if verdicts else None, "n": len(verdicts)}
-    out["corridas"] = {"value": n, "n": n}
+    out["bien_sobre_total"] = _pct(verdicts.count("bien"), len(verdicts))
+    out["corridas"] = {"value": len(recs), "n": len(recs)}
     return out
 
 
@@ -506,6 +551,8 @@ def freeze_baseline(cfg=None, force: bool = False, start: str = BASELINE_V3_RANG
         "range": [start, end],
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "note": BASELINE_V3_NOTE,
+        # Mismo filtro que las columnas semanales de `stats --salud`; si difiere, la comparación no vale.
+        "source_filter": dict(SOURCE_FILTER),
         "categories": health_categories(records_between(start, end, cfg)),
     }
     write_private(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")

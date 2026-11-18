@@ -1146,6 +1146,15 @@ def _stats_health(semana: str | None, crudo: bool) -> None:
         f"base v3: {base['range'][0]}..{base['range'][1]} ({(base.get('categories') or {}).get('corridas', {}).get('n', '—')} corridas)"
         if base else "base v3: sin baseline_v3.json (minka stats --freeze-baseline)"
     )
+    if base and table.get("baseline_filter_ok") is not True:
+        why = "no registró su filtro de fuentes (anterior a 0.2.5)" if table.get("baseline_filter_ok") is None else (
+            f"usa un filtro de fuentes distinto ({base.get('source_filter')})"
+        )
+        console.print(
+            f"[yellow]⚠ la base v3 {why}; las columnas semanales usan {metrics.SOURCE_FILTER}: "
+            "la comparación con la base no es válida. Recongela con `minka stats --freeze-baseline --force`.[/yellow]",
+            soft_wrap=True, markup=True, highlight=False,
+        )
     console.print(
         f"[dim]{note}     costo: mediana por corrida ok, tarifa de lista; % sobre corridas ok sin eval_quality; "
         "ausencias refutadas sobre las evaluables; /bien sobre /bien+/mal de response_feedback.jsonl[/dim]",

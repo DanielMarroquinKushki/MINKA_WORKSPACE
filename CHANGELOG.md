@@ -28,18 +28,24 @@ lectura local: ningún cambio toca el mensaje al modelo ni la respuesta mostrada
   `git grep -q -w -F` en el árbol checkouteado de los repos que la misma línea menciona (alias o carpeta;
   si no menciona ninguno, todos los de REPOS). Tope de 1 s y 3 nombres por corrida. Estados: refutada
   (`absences_refuted`), confirmada, no evaluable (`absences_unclear`: sin backticks, fuera del tope, git
-  falló). El registro se completa reescribiendo su línea (`metrics.amend_run_record`). Nunca marca la
+  falló). El registro se completa reescribiendo su línea (`metrics.amend_run_record`) bajo un cerrojo
+  `fcntl.flock` sobre `<día>.jsonl.lock` compartido con `append_private`, con temporal + `os.replace`:
+  REPL y bridge pueden escribir a la vez sin perder líneas (test con dos procesos). Nunca marca la
   respuesta ni avisa al modelo; `stats` y el resumen de corrida (stderr) muestran los tres contadores.
 - `minka stats --salud [--semana AAAA-MM-DD] [--crudo]` (`core/health.py`): costo mediano (info_direct,
   llm/1, llm/2+), caché mediana, % citas no encontradas, % símbolo lejano/ausente (informativo),
   % ausencias refutadas (sobre las evaluables), % interrumpidas, % vueltas con tope, /bien sobre
   /bien+/mal (de `response_feedback.jsonl`), % cierres con oferta. Columnas: semana ISO del ancla, las 4
   anteriores y la base v3 si existe. El n SIEMPRE visible; con n < `HEALTH_MIN_N` (20) por categoría:
-  "sin datos suficientes (n=K)". `--crudo` muestra la cifra igual con el aviso "muestra pequeña".
-- `doctor`: cuatro chequeos no bloqueantes sobre los últimos 7 días: caché mediana < `HEALTH_CACHE_MIN`
-  (0.80), citas no encontradas > `HEALTH_CITATIONS_MISSING_MAX` (0.05), ausencias refutadas >
-  `HEALTH_ABSENCE_REFUTED_MAX` (0.0), costo mediano +`HEALTH_COST_RISE_PCT` (25 %) contra los 7 días
-  anteriores. Con n < `HEALTH_MIN_N` dice "sin datos suficientes" y nunca alerta.
+  "sin datos suficientes (n=K)". `--crudo` muestra la cifra igual con el aviso "muestra pequeña". Un
+  contador que no existe en un registro antiguo (`citations_symbol_*`, `absences_*`, `interrupted`…) es
+  "sin dato", no 0: ese registro queda fuera del n de esa categoría ("—" si ninguno lo tiene). La base
+  guarda `source_filter` (ok, sin `eval_quality`) y el n por categoría; si difiere del de las columnas o
+  no está registrado, `--salud` avisa que la comparación no vale.
+- `doctor`: tres alertas no bloqueantes sobre los últimos 7 días (caché mediana < `HEALTH_CACHE_MIN` 0.80,
+  citas no encontradas > `HEALTH_CITATIONS_MISSING_MAX` 0.05, costo mediano +`HEALTH_COST_RISE_PCT` 25 %
+  contra los 7 anteriores) y una línea informativa ("–") con el % de ausencias refutadas: es "para
+  revisar", no un error, sin umbral. Con n < `HEALTH_MIN_N` dice "sin datos suficientes" y nunca alerta.
 - `stats --purge --que metricas|logs|feedback|todo [--before AAAA-MM-DD] [--yes]`: `--que` obligatorio
   (exit 2 sin él); `--before` aplica a lo elegido (metricas: archivos de días anteriores; logs y feedback:
   líneas con `ts` anterior, el archivo queda); simula por defecto; `baseline_v3.json` nunca entra.

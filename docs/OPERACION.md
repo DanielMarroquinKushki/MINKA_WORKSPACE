@@ -16,7 +16,7 @@ ahí salvo lo que pida una tool de escritura aprobada por el ApprovalGate (parch
 | `projects/<p>/` | config, prompts, knowledge, evals del proyecto | el dev; `knowledge init --apply` solo añade | manual |
 | `active-context/<p>.md` | contexto vivo (ticket, pendientes) | el dev | manual |
 | `projects/<p>/evals/routing_feedback.jsonl`, `routing_cases.draft.json` | `/mal`: run_id, router, plan, pedido normalizado y redactado (≤120 caracteres; si no, solo sha256), agente esperado y nota; nunca respuestas ni historial | `/mal` en el REPL; `evals routing --from-feedback` | manual. Archivos 0600, carpeta 0700. Contienen texto de pedidos: **no versionar** |
-| `output/metrics/runs/<día>.jsonl` | una línea por corrida: tokens, costo, router, `prompt_hash`, contadores (incl. `absences_said/refuted/unclear`, completados tras mostrar la respuesta); nunca la tarea ni la respuesta | `Orchestrator._close_run_record`, `metrics.amend_run_record` | `METRICS_KEEP_DAYS` (90): archivos de días más viejos se retiran al abrir la primera corrida del proceso, con aviso. 0600/0700. `stats --purge --que metricas` |
+| `output/metrics/runs/<día>.jsonl` | una línea por corrida: tokens, costo, router, `prompt_hash`, contadores (incl. `absences_said/refuted/unclear`, completados tras mostrar la respuesta); nunca la tarea ni la respuesta | `Orchestrator._close_run_record`, `metrics.amend_run_record` (bajo `<día>.jsonl.lock`, temporal + `os.replace`) | `METRICS_KEEP_DAYS` (90): archivos de días más viejos se retiran al abrir la primera corrida del proceso, con aviso. 0600/0700. `stats --purge --que metricas` |
 | `output/metrics/baseline_v3.json` | categorías de salud del rango 2026-11-05..2026-11-11 (referencia, no meta) | `stats --freeze-baseline` | manual; ni la rotación ni `--purge` lo tocan |
 | `projects/<p>/evals/response_feedback.jsonl` | `/bien` y `/mal`: ts, run_id, router, plan, veredicto, nota redactada ≤80; nunca pedido ni respuesta | `/bien`, `/mal` en el REPL | manual (`stats --purge --que feedback`). 0600/0700 |
 | `output/logs/agent_runs.jsonl` | una línea por corrida de agente: tarea y 500 caracteres del resultado **redactados**, usage | `BaseAgent._log` | `AGENT_LOG_KEEP_DAYS` (30). Al abrir la primera corrida del proceso se retiran las líneas viejas, se avisa cuántas y queda copia completa en `agent_runs.jsonl.1` |
@@ -58,10 +58,13 @@ de día; logs y feedback por línea, según su `ts`). `baseline_v3.json` nunca e
    ISO (ancla, 4 anteriores y base v3) el costo mediano por ruta, caché mediana, % citas no encontradas,
    % símbolo lejano/ausente, % ausencias refutadas, % interrumpidas, % vueltas con tope, /bien sobre
    /bien+/mal y % cierres con oferta. El n va siempre; bajo `HEALTH_MIN_N` (20) por categoría dice
-   "sin datos suficientes" (con `--crudo` muestra la cifra y "muestra pequeña"). `minka doctor` aplica
-   los mismos datos de los últimos 7 días con `HEALTH_CACHE_MIN` (0.80), `HEALTH_CITATIONS_MISSING_MAX`
-   (0.05), `HEALTH_ABSENCE_REFUTED_MAX` (0.0) y `HEALTH_COST_RISE_PCT` (0.25 contra los 7 anteriores);
-   nunca bloquea ni alerta con poca muestra. Las ausencias ("no existe", "no hay", `[NO ENCONTRADO`) se
+   "sin datos suficientes" (con `--crudo` muestra la cifra y "muestra pequeña"). Un contador que no
+   existe en un registro antiguo es "sin dato", no 0: ese registro no entra en el n de esa categoría. La
+   base v3 guarda su `source_filter`; si difiere del de las columnas, `--salud` avisa. `minka doctor`
+   aplica los mismos datos de los últimos 7 días con `HEALTH_CACHE_MIN` (0.80),
+   `HEALTH_CITATIONS_MISSING_MAX` (0.05) y `HEALTH_COST_RISE_PCT` (0.25 contra los 7 anteriores); nunca
+   bloquea ni alerta con poca muestra; el % de ausencias refutadas sale como informativo ("–", para
+   revisar, no es error). Las ausencias ("no existe", "no hay", `[NO ENCONTRADO`) se
    cuentan tras mostrar la respuesta y se contrastan con `git grep` en la rama checkouteada de los
    repos que la frase menciona (≤1 s, ≤3 nombres); solo conteo: nada se marca ni se avisa al modelo.
 1. `minka stats --day` (o `--month`). Mira primero **rutas del router**: `info_direct` es una

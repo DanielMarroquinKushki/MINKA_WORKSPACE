@@ -132,7 +132,7 @@ def out_dir(tmp_path, monkeypatch):
     out = tmp_path / "out"
     monkeypatch.setattr(config, "OUTPUT_DIR", out)
     monkeypatch.setattr(config, "PROJECTS_DIR", tmp_path / "projects", raising=False)
-    for key in ("HEALTH_MIN_N", "HEALTH_CACHE_MIN", "HEALTH_CITATIONS_MISSING_MAX", "HEALTH_ABSENCE_REFUTED_MAX", "HEALTH_COST_RISE_PCT"):
+    for key in ("HEALTH_MIN_N", "HEALTH_CACHE_MIN", "HEALTH_CITATIONS_MISSING_MAX", "HEALTH_COST_RISE_PCT"):
         monkeypatch.setattr(config, key, getattr(config, key), raising=False)
     return out
 
@@ -295,8 +295,13 @@ def test_doctor_avisa_con_cache_070_y_calla_con_085(out_dir):
     _write(out_dir, "2026-11-15", 25, tokens=_cache_tokens(0.85))
     alerts = {a["name"]: a for a in health.health_alerts(config, today=TODAY)}
     assert alerts["Caché 7 días"]["ok"] is True and "85% (n=25)" in alerts["Caché 7 días"]["detail"]
-    # citas 25% > 5% y ausencias 50% > 0%: avisan; con 19 registros no
-    assert alerts["Citas no encontradas 7 días"]["ok"] is False and alerts["Ausencias refutadas 7 días"]["ok"] is False
+    # citas 25% > 5% avisa; ausencias 50% es informativo ("para revisar"), nunca alerta
+    assert alerts["Citas no encontradas 7 días"]["ok"] is False
+    abs_alert = alerts["Ausencias refutadas 7 días"]
+    assert abs_alert["ok"] is True and abs_alert["informative"] is True and "50% (n=50) · para revisar" in abs_alert["detail"]
+    abs_check = [c for c in doctor.run_checks(config, now=datetime(2026, 11, 17, 12, tzinfo=timezone.utc)) if c.name == "Ausencias refutadas 7 días"][0]
+    assert abs_check.mark == "–" and abs_check.ok is True and abs_check.critical is False
+    assert not hasattr(config, "HEALTH_ABSENCE_REFUTED_MAX")
     for p in (out_dir / "metrics" / "runs").glob("*.jsonl"):
         p.unlink()
     # el n es por categoría: 19 corridas con 4 citas cada una son 76 citas (sí alcanza), pero 19 cachés no
@@ -359,3 +364,79 @@ def test_purge_exige_que_y_simula_sin_yes(out_dir, wide):
     assert "Borrados 1 archivo(s)" in res.output and not fb.exists() and log.is_file() and baseline.exists()
     with pytest.raises(ValueError):
         metrics.purge_plan(config, None, "nada")
+
+
+# ---------------------------------------------------------------------------
+# 6. clave ausente = sin dato; amend atómico con dos escritores; filtro de la base
+# ---------------------------------------------------------------------------
+
+
+def test_registros_antiguos_sin_la_clave_quedan_fuera_del_n():
+    new = _record("2026-11-16", 0, interrupted=0, iterations_capped=1, ends_with_offer=False,
+                  citations_symbol_far=1, citations_symbol_absent=0)
+    old = {k: v for k, v in _record("2026-11-16", 1).items()
+           if k not in ("absences_said", "absences_refuted", "absences_unclear", "citations_symbol_far", "citations_symbol_absent")}
+    old.pop("interrupted", None)  # registro de 0.2.3: tampoco tiene interrupted/iterations_capped/ends_with_offer
+    cats = metrics.health_categories([new, old])
+    assert cats["corridas"]["n"] == 2 and cats["cache_mediana"]["n"] == 2
+    assert cats["citas_no_encontradas_pct"] == {"value": 0.25, "n": 8}  # ambos la tienen
+    assert cats["citas_simbolo_lejano_o_ausente_pct"] == {"value": 0.25, "n": 4}  # solo el nuevo
+    assert cats["ausencias_refutadas_pct"] == {"value": 0.5, "n": 2}  # solo el nuevo
+    assert cats["interrumpidas_pct"] == {"value": 0.0, "n": 1} and cats["vueltas_con_tope_pct"] == {"value": 1.0, "n": 1}
+    assert cats["cierres_con_oferta_pct"] == {"value": 0.0, "n": 1}
+    only_old = metrics.health_categories([old])
+    assert only_old["ausencias_refutadas_pct"] == {"value": None, "n": 0} and only_old["interrumpidas_pct"] == {"value": None, "n": 0}
+    assert health.fmt_cell(only_old["ausencias_refutadas_pct"], "pct", 20, False) == "— (n=0)"
+
+
+_WRITER = """
+import json, sys
+from pathlib import Path
+from types import SimpleNamespace
+from minka.core import metrics
+cfg = SimpleNamespace(OUTPUT_DIR=Path(sys.argv[1]))
+tag, parity = sys.argv[2], int(sys.argv[3])
+for round_ in range(20):
+    for i in range(parity, 40, 2):
+        assert metrics.amend_run_record(f"r{i}", {tag: round_ + 1}, cfg), (tag, i)
+    metrics.append_private(metrics.runs_dir(cfg) / (metrics.local_day() + ".jsonl"), json.dumps({"run_id": f"{tag}-new-{round_}", "ok": True}))
+"""
+
+
+def test_amend_con_dos_procesos_no_pierde_lineas(out_dir):
+    import sys
+
+    for i in range(40):
+        metrics.write_run_record({"run_id": f"r{i}", "ok": True})
+    procs = [subprocess.Popen([sys.executable, "-c", _WRITER, str(out_dir), tag, str(parity)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE) for tag, parity in (("a", 0), ("b", 1))]
+    outs = [p.communicate(timeout=120) for p in procs]
+    assert all(p.returncode == 0 for p in procs), [o[1].decode()[-800:] for o in outs]
+    recs = {r["run_id"]: r for r in metrics.read_run_records(cfg=config)}
+    assert len(recs) == 40 + 40  # ninguna línea perdida ni duplicada
+    assert all(recs[f"r{i}"]["a"] == 20 for i in range(0, 40, 2)) and all(recs[f"r{i}"]["b"] == 20 for i in range(1, 40, 2))
+    assert all(("b" not in recs[f"r{i}"]) for i in range(0, 40, 2))
+    path = metrics.runs_dir(config) / f"{metrics.local_day()}.jsonl"
+    assert oct(path.stat().st_mode & 0o777) == "0o600" and not list(path.parent.glob(".*.tmp"))
+    assert (path.parent / (path.name + ".lock")).exists() and oct((path.parent / (path.name + ".lock")).stat().st_mode & 0o777) == "0o600"
+
+
+def test_baseline_guarda_source_filter_y_salud_avisa_si_difiere(out_dir, wide):
+    _write(out_dir, "2026-11-06", 3)
+    runner = CliRunner()
+    assert runner.invoke(minka_main.app, ["stats", "--freeze-baseline"]).exit_code == 0
+    data = json.loads(metrics.baseline_path(config).read_text())
+    assert data["source_filter"] == {"ok_only": True, "excluded_sources": ["eval_quality"]}
+    assert all("n" in c for c in data["categories"].values())
+    res = runner.invoke(minka_main.app, ["stats", "--salud", "--semana", "2026-11-17"])
+    assert res.exit_code == 0 and "⚠ la base v3" not in res.output
+    # base congelada con otro filtro (o sin registrarlo): aviso, la tabla sigue saliendo
+    data["source_filter"] = {"ok_only": False, "excluded_sources": []}
+    metrics.write_private(metrics.baseline_path(config), json.dumps(data))
+    flat = " ".join(runner.invoke(minka_main.app, ["stats", "--salud", "--semana", "2026-11-17"]).output.split())
+    assert "⚠ la base v3 usa un filtro de fuentes distinto" in flat and "no es válida" in flat and "base v3: 2026-11-05..2026-11-11" in flat
+    del data["source_filter"]
+    metrics.write_private(metrics.baseline_path(config), json.dumps(data))
+    flat = " ".join(runner.invoke(minka_main.app, ["stats", "--salud", "--semana", "2026-11-17"]).output.split())
+    assert "no registró su filtro de fuentes" in flat
+    assert health.baseline_filter_matches(None) is None and health.baseline_filter_matches({"source_filter": dict(metrics.SOURCE_FILTER)}) is True

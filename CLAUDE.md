@@ -37,12 +37,14 @@ Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
   (`core/health.py`): categorías por semana ISO (ancla, 4 anteriores, base v3); el n siempre visible y
   "sin datos suficientes" bajo `HEALTH_MIN_N` (20) salvo con `--crudo` ("muestra pequeña").
   `stats --purge --que metricas|logs|feedback|todo [--before] [--yes]` (`--que` obligatorio, simula por
-  defecto, nunca `baseline_v3.json`); `stats --freeze-baseline`. `doctor` añade "Permisos de datos" y
-  4 chequeos de salud de 7 días (`HEALTH_CACHE_MIN` 0.80, `HEALTH_CITATIONS_MISSING_MAX` 0.05,
-  `HEALTH_ABSENCE_REFUTED_MAX` 0.0, `HEALTH_COST_RISE_PCT` 0.25), nunca bloqueantes. Ausencias de la
-  respuesta ("no existe", "no hay", `[NO ENCONTRADO`) contadas tras mostrarla y contrastadas con
-  `git grep` en REPOS (`core/orchestrator/absence_check.py`, ≤1 s, ≤3 nombres): `absences_said /
-  refuted / unclear` en el registro; solo conteo, nada se marca ni se avisa al modelo.
+  defecto, nunca `baseline_v3.json`); `stats --freeze-baseline` (guarda `source_filter`; `--salud` avisa
+  si difiere). Un contador ausente en un registro antiguo es "sin dato", no 0 (fuera del n). `doctor`
+  añade "Permisos de datos", 3 alertas de salud de 7 días (`HEALTH_CACHE_MIN` 0.80,
+  `HEALTH_CITATIONS_MISSING_MAX` 0.05, `HEALTH_COST_RISE_PCT` 0.25) nunca bloqueantes y el % de
+  ausencias refutadas como informativo ("para revisar"). Ausencias de la respuesta ("no existe", "no
+  hay", `[NO ENCONTRADO`) contadas tras mostrarla y contrastadas con `git grep` en REPOS
+  (`core/orchestrator/absence_check.py`, ≤1 s, ≤3 nombres): `absences_said / refuted / unclear` en el
+  registro (reescritura bajo `flock` + `os.replace`); solo conteo, nada se marca ni se avisa al modelo.
 - **Freno de gasto** (`core/orchestrator/budget.py`, lote 5): antes de lanzar un agente el orquestador
   levanta `BudgetGate` si la sesión alcanzó `SESSION_MAX_USD` (5.0; suma planner e interrumpidas) o
   si hay ráfaga (`BURST_N`=3 corridas con agente seguidas a menos de `BURST_GAP_SECONDS`=5 s del fin
