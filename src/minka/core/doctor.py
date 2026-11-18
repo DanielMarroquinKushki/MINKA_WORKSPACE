@@ -275,6 +275,16 @@ def run_checks(cfg, *, sso_cache_dir: Path | None = None, now: datetime | None =
             critical=False,
         )
     )
+    # Salud de los últimos 7 días (core/health.py): umbrales HEALTH_*; aviso, nunca bloquea; con menos de
+    # HEALTH_MIN_N registros dice "sin datos suficientes".
+    try:
+        from minka.core import health
+
+        alerts = health.health_alerts(cfg, today=(now.astimezone().date() if now else None))
+    except Exception:  # noqa: BLE001 — el diagnóstico de salud nunca rompe el doctor
+        alerts = []
+    for a in alerts:
+        checks.append(Check(a["name"], a["ok"], a["detail"], a["hint"], critical=False))
     return checks
 
 

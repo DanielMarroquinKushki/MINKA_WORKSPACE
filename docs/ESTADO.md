@@ -1,6 +1,6 @@
 # Estado de minka — qué es, cómo funciona y qué se ha comprobado
 
-Fecha: 2026-11-12 · versión del paquete 0.2.1 (tag `v0.2.1`, HEAD `b1c9007`) · suite 611 tests (63 archivos).
+Fecha: 2026-11-17 · versión del paquete 0.2.5 (paso 12b; última etiqueta publicada `v0.2.4`) · suite: ver `uv run pytest -q`.
 Todo lo afirmado aquí se verifica en el código (`archivo:línea`), en los tests o en los informes de
 medición (`escaner_final.md`, `escaner_cierre.md`, `escaner_separacion.md`). Lo que no se pudo
 comprobar está marcado **no verificado**. Los ejemplos usan un "proyecto de ejemplo" con repos
@@ -155,7 +155,7 @@ respuesta dice "no existe", "no hay" o `[NO ENCONTRADO` y un repo no está en su
 
 | Comando / flag | Qué hace |
 |---|---|
-| `minka` | REPL. Comandos: `/status` (incluye $ de la sesión), `/clear`, `/detalle [N]`, `/mal [agente] [nota]`, `salir` |
+| `minka` | REPL. Comandos: `/status` (incluye $ y feedback de la sesión), `/clear`, `/detalle [N]`, `/bien [nota]`, `/mal [agente] [nota]`, `salir` |
 | `minka "pedido"` | una consulta y sale |
 | `--project P` | proyecto activo (si no: directorio actual, luego `DEFAULT_PROJECT`) |
 | `--agent architecture\|report\|pr_review` | fuerza un agente de solo lectura y salta el planner; con una consulta de información simple sale breve |
@@ -173,11 +173,14 @@ respuesta dice "no existe", "no hay" o `[NO ENCONTRADO` y un repo no está en su
 | `--index-repos` / `--index-knowledge` | índice ChromaDB de código / de `.md` (extra `[rag]`) |
 | `--evaluate`, `--optimize-prompt`, `--push-prompts` | nivel 5/6 y Langfuse; requieren flags de config y LLM |
 | `minka init [--yes]` | onboarding guiado; nunca imprime lo que escribes |
-| `minka doctor [--project]` | Python, uv, sesión, REPOS, chromadb, proyecto, contexto vivo, tamaños de datos (aviso sobre `DOCTOR_SIZE_WARN_MB`) |
+| `minka doctor [--project]` | Python, uv, sesión, REPOS, chromadb, proyecto, contexto vivo, tamaños de datos (aviso sobre `DOCTOR_SIZE_WARN_MB`), permisos de datos y 4 chequeos de salud de 7 días (`HEALTH_*`; con n < `HEALTH_MIN_N` "sin datos suficientes"); los de salud nunca bloquean |
 | `minka --version` | versión, commit y `requested_revision` de la instalación (o "editable") |
 | `--trace` / `TRACE_ENABLED` | traza local de la corrida en `output/trace/<día>/<run_id>.jsonl`; apagada por defecto |
 | `minka trace [run_id \| --last \| --clear]` | lista, lee o borra las trazas locales |
 | `minka stats [--day\|--month] [--project] [--agent] [--source]` | tokens, caché, costo, rutas, citas, afirmaciones, `prompt_hash` |
+| `minka stats --salud [--semana AAAA-MM-DD] [--crudo]` | salud por semana ISO (ancla, 4 anteriores, base v3): costo mediano por ruta, caché, % citas no encontradas, % símbolo lejano/ausente, % ausencias refutadas, % interrumpidas, % vueltas con tope, /bien sobre /bien+/mal, % cierres con oferta. El n siempre visible; bajo `HEALTH_MIN_N` (20) "sin datos suficientes" salvo `--crudo` |
+| `minka stats --purge --que metricas\|logs\|feedback\|todo [--before AAAA-MM-DD] [--yes]` | simula (sin `--yes`) o borra lo elegido; `--que` obligatorio; `baseline_v3.json` nunca entra |
+| `minka stats --freeze-baseline [--force]` | congela `output/metrics/baseline_v3.json` (categorías de salud del rango 2026-11-05..2026-11-11) |
 | `minka evals routing [--runs 1-5] [--json-out] [--from-feedback]` | mide el planner con los casos `eval=info` de `core/evals/routing_cases.json` (60 casos golden en total) más `projects/<p>/evals/routing_cases.json` si existe; cuesta tokens. `--from-feedback` no llama al LLM: convierte `evals/routing_feedback.jsonl` (`/mal`) en `evals/routing_cases.draft.json` |
 | `minka stats` / `minka doctor` (tope diario) | si el gasto del día (sin `eval_quality`) alcanza `DAILY_MAX_USD` (20) avisan; nunca bloquean |
 | Freno de gasto (`SESSION_MAX_USD` 5.0, `BURST_N` 3, `BURST_GAP_SECONDS` 5, `ESTIMATE_CONFIRM_USD` 0.50, `ESTIMATE_MIN_RUNS` 5) | antes de lanzar un agente: tope de sesión (suma planner e interrumpidas), ráfaga (3 corridas con agente seguidas a <5 s del fin de la anterior) y estimado previo (router `llm` o 2+ pasos). REPL con TTY pregunta ("sí" sube un escalón / reinicia la ráfaga / acepta el estimado; "no" descarta); sin TTY o bridge: línea y exit 3. Las capas de $0, `evals quality` y el bridge no pasan por él |
@@ -200,8 +203,8 @@ respuesta dice "no existe", "no hay" o `[NO ENCONTRADO` y un repo no está en su
   `stacks.py:26`), `COMPLIANCE` (`["pci"]` opcional), `REPOS` (alias → ruta, relativa a `REPOS_ROOT`
   o absoluta), `RAG_ENABLED`, `AGENT_TOOLS`, `AGENT_KNOWLEDGE`, `PR_CHECKLIST`, `RISK_PATTERNS`,
   `CORE_MODULE_NAME`.
-- **En disco**: métricas por corrida (números y nombres, `output/metrics/runs/<día>.jsonl`, sin
-  retención automática), log de corridas de los agentes con la tarea y 500 caracteres del resultado
+- **En disco**: métricas por corrida (números y nombres, `output/metrics/runs/<día>.jsonl`, rotan a
+  `METRICS_KEEP_DAYS` = 90 sin tocar `baseline_v3.json`), log de corridas de los agentes con la tarea y 500 caracteres del resultado
   (`output/logs/agent_runs.jsonl`; rota a `AGENT_LOG_KEEP_DAYS` = 30 con copia `.1` y aviso), traza
   opcional por corrida sin texto del modelo ni contenido de tools (`output/trace/`, 0700/0600, rota a
   `TRACE_KEEP_DAYS` = 7), estado de una corrida interrumpida, borradores de knowledge. Detalle y
@@ -259,6 +262,12 @@ respuesta dice "no existe", "no hay" o `[NO ENCONTRADO` y un repo no está en su
   (`citation_check.py:1-10`, `claim_check.py:1-11`). No lee dentro de bloques de código ni de literales
   entre comillas. Una línea con varios símbolos vale si alguno está cerca; las minúsculas sueltas no
   cuentan como símbolo.
+- Paso 12b (0.2.5) es un **medidor pasivo con muestra pequeña**: semana 45 con 125 corridas, 46 con 18,
+  47 con 2; casi todas las celdas de `stats --salud` dicen "sin datos suficientes" hasta juntar 20 por
+  categoría. Sobre lo guardado solo 10 de 112 negaciones eran evaluables con el patrón estricto
+  (1 refutada); la precisión de las refutadas no se verificó a mano. `/bien` y `/mal` etiquetan
+  respuestas, pero con un solo usuario. La comprobación de ausencias mira solo la rama checkouteada de
+  cada repo (`git grep`, `absence_check.py:1-16`).
 - Paso 12 (0.2.4) **no ejercitado en respuestas completas**: ids `R-nn`, duraciones con procedencia,
   símbolo cerca de la cita y antigüedad se probaron sin red y se midieron sobre vistas previas de 500
   caracteres ya anotadas. La foto de ramas añade ~430 ms por corrida con 4 repos (una máquina).
@@ -389,6 +398,12 @@ Tarifa de lista de Anthropic sobre tokens medidos (`core/pricing.py`); no es la 
   (`CONTEXT_STALE_DAYS`), rama por repo con la nota "Búsqueda sobre", saludo + texto, `/mal` con
   corchetes literales, consistencia por `run_id` y estimado por (ruta, pasos). La parte 2 quedó dentro
   del commit `0285a45`, titulado como la parte 1. Pendiente: medir sobre respuestas completas.
+- Hechos en el paso 12b (0.2.5, medidor pasivo): parte 1, símbolo por cita más cercana, 0600/0700 en
+  datos, rotación de métricas (`METRICS_KEEP_DAYS`), contadores nuevos, `/bien` y `/mal` →
+  `response_feedback.jsonl`, `stats --freeze-baseline`; parte 2, ausencias contadas contra REPOS
+  (`absence_check.py`), `stats --salud`, chequeos de salud en `doctor`, `stats --purge --que`, plist de
+  launchd de ejemplo (`docs/ejemplos/`, no instalado). Pendiente: acumular 20 corridas por categoría y
+  verificar a mano las ausencias refutadas antes de corregir nada.
 - Ideas anotadas sin abrir: skills por proyecto, detección de contradicciones entre pasos de un plan.
 
 ## 12. Cómo usarlo bien

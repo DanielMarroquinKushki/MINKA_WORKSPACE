@@ -1,5 +1,63 @@
 # Cambios
 
+## 0.2.5 — paso 12b (medidor pasivo: medir antes de corregir)
+
+Nada mueve la línea base de prompts (`prompt_hash` aabeff39c4ee / a447c50efa60). Todo es conteo y
+lectura local: ningún cambio toca el mensaje al modelo ni la respuesta mostrada.
+
+### Parte 1 (commit `2554e19`)
+- Símbolo → cita más cercana (`citation_check._assign_symbols`): en "`A` (x.go:10) y `B` (y.go:20)" `A`
+  no se busca en y.go; los rangos `a-b` usan el final del rango. Caso de calibración "sender.go:68" sin
+  marca falsa.
+- Datos en disco con 0600/0700 (`metrics.append_private`, `write_private`, también `agent_runs.jsonl`);
+  `doctor` avisa "Permisos de datos" (no bloquea).
+- Rotación de `output/metrics/runs/<día>.jsonl` a `METRICS_KEEP_DAYS` (90), anunciada una vez por proceso;
+  nunca toca `baseline_v3.json`. `stats --purge` (simula; `--yes` borra).
+- Contadores nuevos en el registro: `detalle_views`, `branches_off_base`, `budget_gate`, `estimate_shown`,
+  `profile`.
+- `/bien [nota]` y `/mal [agente] [nota]` escriben `evals/response_feedback.jsonl` (0600; ts, run_id,
+  router, plan, veredicto, nota redactada ≤80; nunca pedido, respuesta ni historial). `/status` muestra el
+  conteo de la sesión.
+- `stats --freeze-baseline [--force]`: congela `output/metrics/baseline_v3.json` con las categorías de
+  salud del rango 2026-11-05..2026-11-11 (referencia previa al paso 12, no una meta).
+
+### Parte 2
+- **Ausencias, solo conteo** (`core/orchestrator/absence_check.py`): tras MOSTRAR la respuesta, cuenta
+  "no existe", "no hay" y `[NO ENCONTRADO` (`absences_said`); del patrón estricto
+  "no (existe|hay) (un|una|el|la)? `X`" / "[NO ENCONTRADO: X]" toma X y lo busca con
+  `git grep -q -w -F` en el árbol checkouteado de los repos que la misma línea menciona (alias o carpeta;
+  si no menciona ninguno, todos los de REPOS). Tope de 1 s y 3 nombres por corrida. Estados: refutada
+  (`absences_refuted`), confirmada, no evaluable (`absences_unclear`: sin backticks, fuera del tope, git
+  falló). El registro se completa reescribiendo su línea (`metrics.amend_run_record`). Nunca marca la
+  respuesta ni avisa al modelo; `stats` y el resumen de corrida (stderr) muestran los tres contadores.
+- `minka stats --salud [--semana AAAA-MM-DD] [--crudo]` (`core/health.py`): costo mediano (info_direct,
+  llm/1, llm/2+), caché mediana, % citas no encontradas, % símbolo lejano/ausente (informativo),
+  % ausencias refutadas (sobre las evaluables), % interrumpidas, % vueltas con tope, /bien sobre
+  /bien+/mal (de `response_feedback.jsonl`), % cierres con oferta. Columnas: semana ISO del ancla, las 4
+  anteriores y la base v3 si existe. El n SIEMPRE visible; con n < `HEALTH_MIN_N` (20) por categoría:
+  "sin datos suficientes (n=K)". `--crudo` muestra la cifra igual con el aviso "muestra pequeña".
+- `doctor`: cuatro chequeos no bloqueantes sobre los últimos 7 días: caché mediana < `HEALTH_CACHE_MIN`
+  (0.80), citas no encontradas > `HEALTH_CITATIONS_MISSING_MAX` (0.05), ausencias refutadas >
+  `HEALTH_ABSENCE_REFUTED_MAX` (0.0), costo mediano +`HEALTH_COST_RISE_PCT` (25 %) contra los 7 días
+  anteriores. Con n < `HEALTH_MIN_N` dice "sin datos suficientes" y nunca alerta.
+- `stats --purge --que metricas|logs|feedback|todo [--before AAAA-MM-DD] [--yes]`: `--que` obligatorio
+  (exit 2 sin él); `--before` aplica a lo elegido (metricas: archivos de días anteriores; logs y feedback:
+  líneas con `ts` anterior, el archivo queda); simula por defecto; `baseline_v3.json` nunca entra.
+- `docs/ejemplos/com.minka.salud.plist`: plist de launchd de EJEMPLO (no instalado) que corre
+  `minka stats --salud --crudo` a las 09:00 y solo imprime.
+
+### Límites
+- Muestra pequeña: semana 45 con 125 corridas, 46 con 18, 47 con 2 al cierre de esta versión. Casi todas
+  las celdas de `--salud` dicen "sin datos suficientes" hasta acumular 20 por categoría.
+- Sobre lo guardado (vistas previas de 500 caracteres) solo 10 de 112 negaciones eran evaluables con el
+  patrón estricto; con él 1 queda refutada. Un patrón laxo (backtick en la misma oración) daba 6, pero
+  arrastra alias y nombres de archivo como "ausencias". La precisión de las refutadas no está verificada
+  a mano.
+- `/bien` y `/mal` etiquetan respuestas, pero hay un solo usuario: el cociente mide a una persona.
+- La comprobación de ausencias mira solo la rama checkouteada de cada repo (`git grep` sin tree-ish): si
+  el repo está en una rama de trabajo, "existe" se refiere a esa rama (ver "Búsqueda sobre").
+- Todo probado sin red (repos git temporales, agentes falsos, fechas fijas). El plist no se instaló.
+
 ## 0.2.4 — paso 12 (que minka no afirme de más)
 
 Nada mueve la línea base de prompts (`prompt_hash` aabeff39c4ee / a447c50efa60). Nota de historia:

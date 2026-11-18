@@ -25,6 +25,7 @@ from minka.core import metrics, render, retention, security, trace_log
 from minka.core.memory.conversation_memory import ConversationMemory
 from minka.core.memory.live_context import load_live_context, wants_live_context
 from minka.core.orchestrator import (
+    absence_check,
     approval_gate,
     budget,
     citation_check,
@@ -111,6 +112,7 @@ class Orchestrator:
         self.feedback_counts: dict[str, int] = {"bien": 0, "mal": 0}
         self.last_budget_gate: str | None = None
         self.last_response_lines: int = 0
+        self.last_absences: absence_check.AbsenceResult | None = None
         self.last_claims: dict = self._empty_claims()
         # Planes de 2+ pasos: con hide_investigation se muestra solo el último paso y los
         # previos quedan aquí (memoria de la sesión, nunca en disco ni en metrics). /detalle.
@@ -317,6 +319,23 @@ class Orchestrator:
         """Foto de ramas de REPOS (git de solo lectura, sin red); se renueva una vez por corrida."""
         self.branches = repo_branches.RepoBranches(getattr(config, "REPOS", {}) or {})
         return self.branches
+
+    def check_absences(self, shown_text: str) -> "absence_check.AbsenceResult | None":
+        """Paso 12b parte 2: cuenta las ausencias de la respuesta YA mostrada y las contrasta con REPOS
+        (git grep, ≤ 1 s, ≤ 3 nombres). Solo conteo: completa absences_* en el registro de la corrida;
+        nunca marca la respuesta ni avisa al modelo. None si no hay texto o la corrida no se registró."""
+        record = self.last_run_record or {}
+        if not shown_text or not record.get("run_id"):
+            return None
+        try:
+            result = absence_check.check(shown_text, getattr(config, "REPOS", {}) or {})
+        except Exception:  # noqa: BLE001 — nunca rompe el flujo
+            return None
+        record.update(result.as_fields())
+        if result.said:
+            metrics.amend_run_record(record["run_id"], result.as_fields())
+        self.last_absences = result
+        return result
 
     def _with_branch_note(self, text: str) -> str:
         """Solo para mostrar: si la respuesta niega algo y algún repo no está en su base, dice sobre

@@ -33,6 +33,16 @@ Backend y perfil AWS se configuran en `<DATA_DIR>/config_local.py` o en
   sha256 de prompts + tools + MODELS; si aparece más de uno en el rango, las
   comparaciones no son válidas). Si el gasto del día alcanza `DAILY_MAX_USD`, `stats` y
   `doctor` avisan (informativo, nunca bloquea; excluye `eval_quality`).
+- **Paso 12b (medidor pasivo, 0.2.5)**: `minka stats --salud [--semana AAAA-MM-DD] [--crudo]`
+  (`core/health.py`): categorías por semana ISO (ancla, 4 anteriores, base v3); el n siempre visible y
+  "sin datos suficientes" bajo `HEALTH_MIN_N` (20) salvo con `--crudo` ("muestra pequeña").
+  `stats --purge --que metricas|logs|feedback|todo [--before] [--yes]` (`--que` obligatorio, simula por
+  defecto, nunca `baseline_v3.json`); `stats --freeze-baseline`. `doctor` añade "Permisos de datos" y
+  4 chequeos de salud de 7 días (`HEALTH_CACHE_MIN` 0.80, `HEALTH_CITATIONS_MISSING_MAX` 0.05,
+  `HEALTH_ABSENCE_REFUTED_MAX` 0.0, `HEALTH_COST_RISE_PCT` 0.25), nunca bloqueantes. Ausencias de la
+  respuesta ("no existe", "no hay", `[NO ENCONTRADO`) contadas tras mostrarla y contrastadas con
+  `git grep` en REPOS (`core/orchestrator/absence_check.py`, ≤1 s, ≤3 nombres): `absences_said /
+  refuted / unclear` en el registro; solo conteo, nada se marca ni se avisa al modelo.
 - **Freno de gasto** (`core/orchestrator/budget.py`, lote 5): antes de lanzar un agente el orquestador
   levanta `BudgetGate` si la sesión alcanzó `SESSION_MAX_USD` (5.0; suma planner e interrumpidas) o
   si hay ráfaga (`BURST_N`=3 corridas con agente seguidas a menos de `BURST_GAP_SECONDS`=5 s del fin
@@ -92,9 +102,10 @@ aws sso login --profile bedrock
 Luego: `minka`
 
 **Comandos disponibles dentro del chat:**
-- `/status`  → estado del sistema (sesión AWS, backend, repos, ramas y distancia a master, memoria, $ de la sesión, nivel)
+- `/status`  → estado del sistema (sesión AWS, backend, repos, ramas y distancia a master, feedback de la sesión, memoria, $ de la sesión, nivel)
 - `/clear`   → limpia el historial de la sesión
-- `/mal [agente] [nota]` → marca la última decisión del router como equivocada (ver Freno de gasto arriba)
+- `/bien [nota]` / `/mal [agente] [nota]` → marcan la última respuesta en `evals/response_feedback.jsonl` (0600;
+  solo ids, veredicto y nota redactada); `/mal` además registra la decisión del router como equivocada
 - `salir`    → termina la sesión
 - Enter envía; Alt+Enter inserta un salto de línea (en Terminal/iTerm2 activar "Option as
   Meta"). Un pegado de `PASTE_COLLAPSE_LINES` (3) líneas o `PASTE_COLLAPSE_CHARS` (500)

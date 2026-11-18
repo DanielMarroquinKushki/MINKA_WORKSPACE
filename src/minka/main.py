@@ -18,6 +18,8 @@ Uso:
     minka --new-project mi-proyecto  # crea el esqueleto de un proyecto nuevo
     minka knowledge check --project P  # verifica las citas archivo:línea del knowledge
     minka stats [--day YYYY-MM-DD | --month YYYY-MM] [--project P] [--agent A]
+    minka stats --salud [--semana AAAA-MM-DD] [--crudo]  # salud por semana ISO; n siempre visible
+    minka stats --purge --que metricas|logs|feedback|todo [--before AAAA-MM-DD] [--yes]
     minka evals routing --runs 3 [--json-out r.json]  # solo planner; cuesta tokens
     minka "analiza X" --quiet  # sin la línea final de tokens/costo (stderr)
     minka "analiza X" --plain  # respuesta sin renderizar Markdown (también MINKA_PLAIN=1;
@@ -585,6 +587,14 @@ def _new_project_flow(
     console.print(f"\n[dim]La próxima sesión detectará '{result['name']}' automáticamente.[/dim]")
 
 
+def _check_absences(orchestrator, result) -> None:
+    """Después de mostrar la respuesta: ausencias ("no existe", "no hay", "[NO ENCONTRADO") contra REPOS con
+    git grep (≤ 1 s, ≤ 3 nombres). Solo conteo en el registro de la corrida; nunca toca la respuesta."""
+    check = getattr(orchestrator, "check_absences", None)
+    if check is not None and isinstance(result, str):
+        check(result)
+
+
 def _print_run_summary(orchestrator, quiet: bool) -> None:
     """Línea final de la corrida en stderr (tokens, cache, costo, tiempo, agentes)."""
     if quiet or os.getenv(QUIET_ENV):
@@ -613,6 +623,10 @@ def _print_run_summary(orchestrator, quiet: bool) -> None:
         branches = getattr(orchestrator, "branches", None)
         if branches is not None and branches.off_base():
             stderr_console.print(f"ramas: {branches.status_line()}", markup=False, highlight=False, style="dim")
+        # Ausencias dichas en la respuesta y contrastadas con REPOS tras mostrarla (solo conteo).
+        absences = getattr(orchestrator, "last_absences", None)
+        if absences is not None and absences.said:
+            stderr_console.print(absences.summary, markup=False, highlight=False, style="dim")
 
 
 @app.callback()
@@ -932,6 +946,7 @@ def main(
             console,
             render=render.should_render(quiet=quiet, json_out=json_out is not None, plain=plain),
         )
+        _check_absences(orchestrator, result)
         _print_run_summary(orchestrator, quiet)
         # last_run_ok distingue "corrió y respondió" de "no pudo correr"
         # (p.ej. sesión AWS expirada, que devuelve un string, no una excepción).
@@ -1016,6 +1031,7 @@ def main(
                     result, console, render=render.should_render(quiet=quiet, plain=plain)
                 )
                 console.print()
+                _check_absences(orchestrator, result)
                 _print_run_summary(orchestrator, quiet)
         except (KeyboardInterrupt, EOFError):
             pass
@@ -1055,10 +1071,18 @@ def trace_cmd(
     console.print(trace_log.format_run(path, trace_log.read_run(path)), markup=False, highlight=False)
 
 
-def _stats_purge(before: str | None, yes: bool) -> None:
-    """`stats --purge`: por defecto solo cuenta; con --yes borra. Nunca toca baseline_v3.json."""
+def _stats_purge(que: str | None, before: str | None, yes: bool) -> None:
+    """`stats --purge --que <metricas|logs|feedback|todo> [--before AAAA-MM-DD] [--yes]`: por defecto solo
+    cuenta; con --yes borra. --before aplica a lo elegido (metricas: archivos de días anteriores; logs y
+    feedback: líneas con ts anterior). Nunca toca baseline_v3.json."""
     from datetime import date
 
+    if not que:
+        console.print(f"[red]--purge exige --que {'|'.join(metrics.PURGE_KINDS)}[/red]")
+        raise typer.Exit(code=2)
+    if que not in metrics.PURGE_KINDS:
+        console.print(f"[red]--que debe ser uno de: {', '.join(metrics.PURGE_KINDS)}[/red]")
+        raise typer.Exit(code=2)
     limit = None
     if before:
         try:
@@ -1066,23 +1090,67 @@ def _stats_purge(before: str | None, yes: bool) -> None:
         except ValueError:
             console.print("[red]--before debe ser AAAA-MM-DD[/red]")
             raise typer.Exit(code=2)
-    plan = metrics.purge_plan(config, limit)
+    plan = metrics.purge_plan(config, limit, que)
     if not plan:
         console.print("Nada que borrar.")
         return
     by_kind: dict[str, tuple[int, int]] = {}
-    for kind, _, n in plan:
-        f, lines = by_kind.get(kind, (0, 0))
-        by_kind[kind] = (f + 1, lines + n)
+    for item in plan:
+        f, lines = by_kind.get(item.kind, (0, 0))
+        by_kind[item.kind] = (f + 1, lines + item.lines)
     resumen = " · ".join(f"{k}: {f} archivo(s), {n} línea(s)" for k, (f, n) in sorted(by_kind.items()))
+    alcance = f"--que {que}" + (f" --before {before}" if before else "")
     if not yes:
         console.print(
-            f"Simulación (nada borrado): {resumen}. Añade --yes para borrar. baseline_v3.json nunca se toca.",
+            f"Simulación (nada borrado) {alcance}: {resumen}. Añade --yes para borrar. baseline_v3.json nunca se toca.",
             soft_wrap=True, markup=False, highlight=False,
         )
         return
-    removed = metrics.purge(plan)
-    console.print(f"Borrados {removed} archivo(s): {resumen}. baseline_v3.json intacto.", soft_wrap=True, markup=False, highlight=False)
+    removed = metrics.purge(plan, limit)
+    console.print(
+        f"Borrados {removed} archivo(s) {alcance}: {resumen}. baseline_v3.json intacto.",
+        soft_wrap=True, markup=False, highlight=False,
+    )
+
+
+def _stats_health(semana: str | None, crudo: bool) -> None:
+    """`stats --salud [--semana AAAA-MM-DD] [--crudo]`: categorías por semana ISO (ancla, 4 anteriores) y base v3."""
+    from datetime import date
+
+    from minka.core import health
+
+    anchor = date.today()
+    if semana:
+        try:
+            anchor = date.fromisoformat(semana)
+        except ValueError:
+            console.print("[red]--semana debe ser AAAA-MM-DD[/red]")
+            raise typer.Exit(code=2)
+    table = health.health_table(config, anchor)
+    need = health.min_n(config)
+    header, rows = health.table_rows(table, need, crudo)
+    rich_table = Table(show_edge=False, pad_edge=False)
+    for i, col in enumerate(header):
+        rich_table.add_column(col, justify="left" if i == 0 else "right")
+    for row in rows:
+        rich_table.add_row(*row)
+    first = table["columns"][0]
+    console.print(
+        f"[bold]salud · semana {first['label']} ({first['start']}..{first['end']}) y 4 anteriores[/bold] · "
+        f"n mínimo por categoría {need} (HEALTH_MIN_N)" + (" · --crudo: cifras con muestra pequeña" if crudo else ""),
+        soft_wrap=True,
+    )
+    console.print(rich_table)
+    base = table.get("baseline")
+    note = (
+        f"base v3: {base['range'][0]}..{base['range'][1]} ({(base.get('categories') or {}).get('corridas', {}).get('n', '—')} corridas)"
+        if base else "base v3: sin baseline_v3.json (minka stats --freeze-baseline)"
+    )
+    console.print(
+        f"[dim]{note}     costo: mediana por corrida ok, tarifa de lista; % sobre corridas ok sin eval_quality; "
+        "ausencias refutadas sobre las evaluables; /bien sobre /bien+/mal de response_feedback.jsonl[/dim]",
+        soft_wrap=True,
+    )
 
 
 def _stats_freeze_baseline(force: bool) -> None:
@@ -1111,8 +1179,20 @@ def stats(
     source: str = typer.Option(
         None, "--source", help=f"Solo corridas con este origen (repl|cli|bridge o la etiqueta {SOURCE_ENV})."
     ),
-    purge: bool = typer.Option(False, "--purge", help="Simula el borrado de métricas, logs y feedback (con --yes borra)."),
-    before: str = typer.Option(None, "--before", help="Con --purge: solo runs/<día>.jsonl anteriores a AAAA-MM-DD."),
+    salud: bool = typer.Option(
+        False, "--salud", help="Tabla de salud por semana ISO (actual, 4 anteriores y base v3); el n siempre visible."
+    ),
+    semana: str = typer.Option(
+        None, "--semana", help="Con --salud: fecha AAAA-MM-DD cuya semana ISO ocupa la primera columna (default: hoy)."
+    ),
+    crudo: bool = typer.Option(
+        False, "--crudo", help="Con --salud: muestra las cifras aunque n < HEALTH_MIN_N, con el aviso 'muestra pequeña'."
+    ),
+    purge: bool = typer.Option(False, "--purge", help="Simula el borrado (con --yes borra). Exige --que."),
+    que: str = typer.Option(None, "--que", help="Con --purge (obligatorio): metricas | logs | feedback | todo."),
+    before: str = typer.Option(
+        None, "--before", help="Con --purge: solo lo anterior a AAAA-MM-DD (metricas: archivos por día; logs y feedback: líneas por ts)."
+    ),
     yes: bool = typer.Option(False, "--yes", help="Con --purge: borra de verdad."),
     freeze_baseline: bool = typer.Option(
         False, "--freeze-baseline", help="Escribe output/metrics/baseline_v3.json desde los registros del rango v3 (no sobrescribe sin --force)."
@@ -1120,10 +1200,13 @@ def stats(
     force: bool = typer.Option(False, "--force", help="Con --freeze-baseline: sobrescribe el baseline existente."),
 ):
     if purge:
-        _stats_purge(before, yes)
+        _stats_purge(que, before, yes)
         return
     if freeze_baseline:
         _stats_freeze_baseline(force)
+        return
+    if salud:
+        _stats_health(semana, crudo)
         return
     label = f"mes {month}" if month else f"día {day or metrics.local_day()}"
     if source:
@@ -1205,7 +1288,8 @@ def stats(
         f"{agg['decisions_unsupported']}     inferidas sin herramienta: {agg['claims_inferred']} · "
         f"inconsistentes: {agg['claims_inconsistent']} · riesgos sin catálogo: {agg['risks_unsupported']}     "
         f"interrumpidas: {agg['interrupted']} · "
-        f"respuestas vacías: {agg['empty_responses']}[/dim]",
+        f"respuestas vacías: {agg['empty_responses']}     ausencias: {agg['absences_said']} dichas · "
+        f"{agg['absences_refuted']} refutadas · {agg['absences_unclear']} no evaluables[/dim]",
         soft_wrap=True,  # una sola línea lógica: sin cortes a mitad de un contador
     )
     hashes = agg.get("prompt_hashes") or {}

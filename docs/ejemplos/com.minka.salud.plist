@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  EJEMPLO, NO INSTALADO. Resumen de salud programado con launchd (macOS):
+  ejecuta `minka stats --salud --crudo` una vez al día a las 09:00 y solo imprime.
+  Sin modelo, sin red y sin escrituras de minka: la única escritura es la de launchd al
+  volcar stdout/stderr en el archivo de StandardOutPath/StandardErrorPath.
+
+  Antes de instalar, reemplaza las TRES rutas marcadas con <...>:
+    - ProgramArguments[0]: ruta absoluta del binario (`command -v minka`).
+    - MINKA_HOME: tu directorio de datos (el mismo que usas en el shell).
+    - StandardOutPath / StandardErrorPath: dónde quieres leer la salida.
+
+  Instalar (solo si lo decides; ver docs/OPERACION.md §7):
+    cp docs/ejemplos/com.minka.salud.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.minka.salud.plist
+  Probar sin esperar a la hora:   launchctl kickstart -k gui/$(id -u)/com.minka.salud
+  Quitar:                          launchctl bootout gui/$(id -u)/com.minka.salud
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.minka.salud</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>&lt;ruta-absoluta-a&gt;/minka</string>
+        <string>stats</string>
+        <string>--salud</string>
+        <string>--crudo</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd no carga tu shell: MINKA_HOME y PATH van explícitos. -->
+        <key>MINKA_HOME</key>
+        <string>&lt;ruta-absoluta-al-directorio-de-datos&gt;</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <!-- Sin TTY la salida ya es texto plano; MINKA_PLAIN=1 lo deja explícito. -->
+        <key>MINKA_PLAIN</key>
+        <string>1</string>
+    </dict>
+
+    <!-- Una vez al día a las 09:00 hora local. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>&lt;ruta&gt;/minka-salud.log</string>
+    <key>StandardErrorPath</key>
+    <string>&lt;ruta&gt;/minka-salud.err.log</string>
+</dict>
+</plist>

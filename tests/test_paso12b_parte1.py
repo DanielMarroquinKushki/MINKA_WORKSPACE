@@ -155,16 +155,16 @@ def test_purge_simula_por_defecto_y_borra_con_yes(out_dir, monkeypatch):
     baseline = out_dir / "metrics" / "baseline_v3.json"
     metrics.write_private(baseline, "{}")
     runner = CliRunner()
-    res = runner.invoke(minka_main.app, ["stats", "--purge"])
-    assert res.exit_code == 0 and "Simulación" in res.output and "runs: 2 archivo(s), 3 línea(s)" in res.output
+    res = runner.invoke(minka_main.app, ["stats", "--purge", "--que", "todo"])
+    assert res.exit_code == 0 and "Simulación" in res.output and "metricas: 2 archivo(s), 3 línea(s)" in res.output
     assert "logs: 1 archivo(s)" in res.output and "feedback: 1 archivo(s)" in res.output
     assert len(list((out_dir / "metrics" / "runs").glob("*.jsonl"))) == 2  # nada borrado
-    res = runner.invoke(minka_main.app, ["stats", "--purge", "--before", "2026-11-01", "--yes"])
+    res = runner.invoke(minka_main.app, ["stats", "--purge", "--que", "todo", "--before", "2026-11-01", "--yes"])
     assert res.exit_code == 0 and "Borrados 1 archivo(s)" in res.output
     assert [p.name for p in (out_dir / "metrics" / "runs").glob("*.jsonl")] == ["2026-11-15.jsonl"]
-    res = runner.invoke(minka_main.app, ["stats", "--purge", "--yes"])
+    res = runner.invoke(minka_main.app, ["stats", "--purge", "--que", "todo", "--yes"])
     assert res.exit_code == 0 and "Borrados 3 archivo(s)" in res.output and baseline.exists()
-    assert runner.invoke(minka_main.app, ["stats", "--purge", "--before", "ayer"]).exit_code == 2
+    assert runner.invoke(minka_main.app, ["stats", "--purge", "--que", "todo", "--before", "ayer"]).exit_code == 2
 
 
 def test_doctor_avisa_permisos_abiertos_sin_bloquear(out_dir, monkeypatch):

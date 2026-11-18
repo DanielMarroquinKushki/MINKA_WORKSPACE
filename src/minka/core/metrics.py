@@ -10,6 +10,7 @@ import os
 import re
 import statistics
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -132,6 +133,7 @@ def build_run_record(
     budget_gate: str | None = None,
     estimate_shown: bool = False,
     profile: str | None = None,
+    absences: dict | None = None,
 ) -> dict:
     per_agent = []
     cost = base = 0.0
@@ -207,6 +209,12 @@ def build_run_record(
         "budget_gate": budget_gate,
         "estimate_shown": bool(estimate_shown),
         "profile": profile,
+        # Paso 12b parte 2 (absence_check.py): ausencias dichas ("no existe", "no hay", "[NO ENCONTRADO"),
+        # refutadas (el nombre existe en el repo) y no evaluables. Se completan tras mostrar la respuesta
+        # (amend_run_record); solo conteo, nunca se marca la respuesta.
+        "absences_said": int((absences or {}).get("absences_said") or 0),
+        "absences_refuted": int((absences or {}).get("absences_refuted") or 0),
+        "absences_unclear": int((absences or {}).get("absences_unclear") or 0),
         # Huella de prompts + tools + modelos (core/baseline.py): misma línea base ⇔ mismo hash.
         "prompt_hash": prompt_hash,
         "ok": ok,
@@ -256,6 +264,37 @@ def write_run_record(record: dict, cfg=None) -> bool:
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def amend_run_record(run_id: str, fields: dict, cfg=None) -> bool:
+    """Completa campos de un registro ya escrito (hoy o ayer, por si la corrida cruzó medianoche):
+    reescribe esa línea del JSONL (0600). Best-effort: False si no lo encontró o no pudo escribir."""
+    if not run_id or not fields:
+        return False
+    today = datetime.now(timezone.utc).astimezone().date()
+    for day in (today, today - timedelta(days=1)):
+        path = runs_dir(cfg) / f"{day.isoformat()}.jsonl"
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+        for i in range(len(lines) - 1, -1, -1):
+            try:
+                rec = json.loads(lines[i])
+            except json.JSONDecodeError:
+                continue
+            if rec.get("run_id") != run_id:
+                continue
+            rec.update(fields)
+            lines[i] = json.dumps(rec, ensure_ascii=False)
+            try:
+                write_private(path, "\n".join(lines) + "\n")
+            except OSError:
+                return False
+            return True
+    return False
 
 
 _DAY_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl$")
@@ -308,35 +347,86 @@ def rotation_notice(files: int, lines: int, cfg=None) -> str:
     return f"metrics/runs: {lines} línea(s) en {files} archivo(s) con más de {keep} días retiradas"
 
 
-def purge_plan(cfg=None, before: date | None = None) -> list[tuple[str, Path, int]]:
-    """Qué borraría `stats --purge`: (etiqueta, ruta, líneas) de runs/<día>.jsonl, logs/agent_runs.jsonl(.1)
-    y los feedback de evals de cada proyecto, anteriores a `before` (sin fecha: todo). Nunca el baseline."""
+PURGE_KINDS = ("metricas", "logs", "feedback", "todo")
+
+
+@dataclass
+class PurgeItem:
+    kind: str  # metricas | logs | feedback
+    path: Path
+    lines: int  # líneas que se retirarían
+    whole: bool  # True: se borra el archivo; False: solo las líneas anteriores a --before
+
+
+def _line_day(line: str) -> date | None:
+    """Fecha del campo "ts" de una línea JSONL (ISO), sin parsear todo el JSON."""
+    i = line.find('"ts": "')
+    if i < 0:
+        return None
+    raw = line[i + 7:].split('"', 1)[0]
+    try:
+        return datetime.fromisoformat(raw).date()
+    except ValueError:
+        return None
+
+
+def _old_lines(path: Path, before: date) -> int:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return 0
+    return sum(1 for ln in lines if ln.strip() and (d := _line_day(ln)) is not None and d < before)
+
+
+def purge_plan(cfg=None, before: date | None = None, kinds: str = "todo") -> list[PurgeItem]:
+    """Qué borraría `stats --purge --que <kinds>`: metricas = runs/<día>.jsonl (archivos completos de
+    días anteriores a `before`), logs = logs/agent_runs.jsonl(.1), feedback = evals/*_feedback.jsonl de
+    cada proyecto. Con `before`, en logs y feedback solo las líneas con `ts` anterior (el archivo queda).
+    Sin fecha: todo. Nunca el baseline."""
     cfg = cfg or config
-    out: list[tuple[str, Path, int]] = []
-    for day, path in _day_files(cfg):
-        if before is None or day < before:
-            out.append(("runs", path, _count_lines(path)))
-    logs = Path(cfg.OUTPUT_DIR) / "logs"
-    for name in ("agent_runs.jsonl", "agent_runs.jsonl.1"):
-        p = logs / name
-        if p.is_file() and before is None:
-            out.append(("logs", p, _count_lines(p)))
-    projects = Path(getattr(cfg, "PROJECTS_DIR", Path(cfg.OUTPUT_DIR) / "no"))
-    if projects.is_dir() and before is None:
-        for p in sorted(projects.glob("*/evals/*_feedback.jsonl")):
-            out.append(("feedback", p, _count_lines(p)))
+    if kinds not in PURGE_KINDS:
+        raise ValueError(f"--que debe ser uno de {', '.join(PURGE_KINDS)}")
+    want = set(PURGE_KINDS[:-1]) if kinds == "todo" else {kinds}
+    out: list[PurgeItem] = []
+    if "metricas" in want:
+        for day, path in _day_files(cfg):
+            if before is None or day < before:
+                out.append(PurgeItem("metricas", path, _count_lines(path), True))
+    files: list[tuple[str, Path]] = []
+    if "logs" in want:
+        logs = Path(cfg.OUTPUT_DIR) / "logs"
+        files += [("logs", logs / n) for n in ("agent_runs.jsonl", "agent_runs.jsonl.1")]
+    if "feedback" in want:
+        projects = Path(getattr(cfg, "PROJECTS_DIR", Path(cfg.OUTPUT_DIR) / "no"))
+        if projects.is_dir():
+            files += [("feedback", p) for p in sorted(projects.glob("*/evals/*_feedback.jsonl"))]
+    for kind, p in files:
+        if not p.is_file():
+            continue
+        if before is None:
+            out.append(PurgeItem(kind, p, _count_lines(p), True))
+        else:
+            n = _old_lines(p, before)
+            if n:
+                out.append(PurgeItem(kind, p, n, False))
     return out
 
 
-def purge(plan: list[tuple[str, Path, int]]) -> int:
-    removed = 0
-    for _, path, _ in plan:
+def purge(plan: list[PurgeItem], before: date | None = None) -> int:
+    """Ejecuta el plan. Devuelve archivos tocados (borrados o reescritos sin las líneas viejas)."""
+    touched = 0
+    for item in plan:
         try:
-            path.unlink()
-            removed += 1
+            if item.whole or before is None:
+                item.path.unlink()
+            else:
+                lines = item.path.read_text(encoding="utf-8", errors="ignore").splitlines()
+                kept = [ln for ln in lines if not (ln.strip() and (d := _line_day(ln)) is not None and d < before)]
+                write_private(item.path, ("\n".join(kept) + "\n") if kept else "")
+            touched += 1
         except OSError:
             continue
-    return removed
+    return touched
 
 
 # -- línea base v3 y categorías de salud -----------------------------------------------------------
@@ -353,8 +443,9 @@ def _median(values: list[float]) -> float | None:
     return round(statistics.median(values), 4) if values else None
 
 
-def health_categories(records: list[dict]) -> dict[str, dict]:
-    """{categoría: {value, n}} sobre corridas ok sin eval_quality. Solo números."""
+def health_categories(records: list[dict], feedback: list[dict] | None = None) -> dict[str, dict]:
+    """{categoría: {value, n}} sobre corridas ok sin eval_quality. Solo números. `feedback`: entradas de
+    response_feedback.jsonl (verdict bien|mal) del mismo rango, para "/bien sobre /bien+/mal"."""
     recs = [r for r in records if r.get("ok") and r.get("source") not in EXCLUDED_SOURCES]
     out: dict[str, dict] = {}
     by_route: dict[str, list[float]] = {}
@@ -382,6 +473,12 @@ def health_categories(records: list[dict]) -> dict[str, dict]:
     out["interrumpidas_pct"] = {"value": round(sum(1 for r in recs if r.get("interrupted")) / n, 4) if n else None, "n": n}
     out["vueltas_con_tope_pct"] = {"value": round(sum(1 for r in recs if r.get("iterations_capped")) / n, 4) if n else None, "n": n}
     out["cierres_con_oferta_pct"] = {"value": round(sum(1 for r in recs if r.get("ends_with_offer")) / n, 4) if n else None, "n": n}
+    # Paso 12b parte 2: ausencias refutadas sobre las evaluables (dichas − no evaluables) y /bien sobre /bien+/mal.
+    evaluable = sum((r.get("absences_said") or 0) - (r.get("absences_unclear") or 0) for r in recs)
+    refuted = sum(r.get("absences_refuted") or 0 for r in recs)
+    out["ausencias_refutadas_pct"] = {"value": round(refuted / evaluable, 4) if evaluable > 0 else None, "n": max(evaluable, 0)}
+    verdicts = [e.get("verdict") for e in (feedback or []) if e.get("verdict") in ("bien", "mal")]
+    out["bien_sobre_total"] = {"value": round(verdicts.count("bien") / len(verdicts), 4) if verdicts else None, "n": len(verdicts)}
     out["corridas"] = {"value": n, "n": n}
     return out
 
@@ -469,6 +566,7 @@ def aggregate(
     claims_checked = claims_unsupported = blocks_proposed = truncated_outputs = claims_doc = 0
     security_excluded = decisions_used = decisions_unsupported = claims_inferred = claims_inconsistent = 0
     interrupted = empty_responses = risks_unsupported = 0
+    absences_said = absences_refuted = absences_unclear = 0
     redactions: Counter = Counter()
     offers = closings = cit_total = cit_missing = cit_ok = cit_far = cit_absent = 0
     routers: Counter = Counter()
@@ -488,6 +586,9 @@ def aggregate(
         risks_unsupported += r.get("risks_unsupported") or 0
         interrupted += r.get("interrupted") or 0
         empty_responses += r.get("empty_responses") or 0
+        absences_said += r.get("absences_said") or 0
+        absences_refuted += r.get("absences_refuted") or 0
+        absences_unclear += r.get("absences_unclear") or 0
         redactions.update({k: int(v) for k, v in (r.get("redactions") or {}).items()})
         truncated_outputs += r.get("truncated_outputs") or 0
         if r.get("prompt_hash"):
@@ -554,6 +655,9 @@ def aggregate(
         "risks_unsupported": risks_unsupported,
         "interrupted": interrupted,
         "empty_responses": empty_responses,
+        "absences_said": absences_said,
+        "absences_refuted": absences_refuted,
+        "absences_unclear": absences_unclear,
         "truncated_outputs": truncated_outputs,
         "ends_with_offer": offers,
         "closings_removed": closings,

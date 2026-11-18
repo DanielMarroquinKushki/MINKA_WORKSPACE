@@ -16,7 +16,9 @@ ahí salvo lo que pida una tool de escritura aprobada por el ApprovalGate (parch
 | `projects/<p>/` | config, prompts, knowledge, evals del proyecto | el dev; `knowledge init --apply` solo añade | manual |
 | `active-context/<p>.md` | contexto vivo (ticket, pendientes) | el dev | manual |
 | `projects/<p>/evals/routing_feedback.jsonl`, `routing_cases.draft.json` | `/mal`: run_id, router, plan, pedido normalizado y redactado (≤120 caracteres; si no, solo sha256), agente esperado y nota; nunca respuestas ni historial | `/mal` en el REPL; `evals routing --from-feedback` | manual. Archivos 0600, carpeta 0700. Contienen texto de pedidos: **no versionar** |
-| `output/metrics/runs/<día>.jsonl` | una línea por corrida: tokens, costo, router, `prompt_hash`, contadores; nunca la tarea ni la respuesta | `Orchestrator._close_run_record` | sin rotación automática (son pequeñas; `minka stats --month` las lee) |
+| `output/metrics/runs/<día>.jsonl` | una línea por corrida: tokens, costo, router, `prompt_hash`, contadores (incl. `absences_said/refuted/unclear`, completados tras mostrar la respuesta); nunca la tarea ni la respuesta | `Orchestrator._close_run_record`, `metrics.amend_run_record` | `METRICS_KEEP_DAYS` (90): archivos de días más viejos se retiran al abrir la primera corrida del proceso, con aviso. 0600/0700. `stats --purge --que metricas` |
+| `output/metrics/baseline_v3.json` | categorías de salud del rango 2026-11-05..2026-11-11 (referencia, no meta) | `stats --freeze-baseline` | manual; ni la rotación ni `--purge` lo tocan |
+| `projects/<p>/evals/response_feedback.jsonl` | `/bien` y `/mal`: ts, run_id, router, plan, veredicto, nota redactada ≤80; nunca pedido ni respuesta | `/bien`, `/mal` en el REPL | manual (`stats --purge --que feedback`). 0600/0700 |
 | `output/logs/agent_runs.jsonl` | una línea por corrida de agente: tarea y 500 caracteres del resultado **redactados**, usage | `BaseAgent._log` | `AGENT_LOG_KEEP_DAYS` (30). Al abrir la primera corrida del proceso se retiran las líneas viejas, se avisa cuántas y queda copia completa en `agent_runs.jsonl.1` |
 | `output/trace/<día>/<run_id>.jsonl` | traza por corrida: `route`, `turn`, `tool`, `end`; nunca texto del modelo ni contenido de tools | `core/trace_log.py`, solo con `TRACE_ENABLED` o `--trace` | `TRACE_KEEP_DAYS` (7); la rotación se anuncia con una línea al abrir la corrida; `minka trace --clear` borra todo. Directorios 0700, archivos 0600 |
 | `output/state/` | checkpoint de una corrida interrumpida para reanudar | `StateManager` | se borra al completar la corrida |
@@ -29,6 +31,10 @@ en memoria. Ningún archivo bajo `output/` contiene secretos sin redactar: todo 
 
 `minka doctor` muestra el tamaño de `.chromadb`, `logs`, `trace` y `runs` y avisa (no bloquea) si
 alguno supera `DOCTOR_SIZE_WARN_MB` (500).
+
+Borrar a mano: `minka stats --purge --que metricas|logs|feedback|todo [--before AAAA-MM-DD]` solo
+cuenta; con `--yes` borra. `--que` es obligatorio; `--before` aplica a lo elegido (métricas por archivo
+de día; logs y feedback por línea, según su `ts`). `baseline_v3.json` nunca entra.
 
 ## 2. Si el costo se dispara
 
@@ -48,6 +54,16 @@ alguno supera `DOCTOR_SIZE_WARN_MB` (500).
    algún repo fuera de master. En `stats`: `citas no encontradas: m/t · símbolo ok/lejano/ausente` y
    `riesgos sin catálogo`. Las líneas base antiguas de citas (28/0, 49/1, 37/0) solo se comparan con el
    contador antiguo `no encontradas/total`.
+0c. Salud por semana (0.2.5): `minka stats --salud [--semana AAAA-MM-DD] [--crudo]` muestra por semana
+   ISO (ancla, 4 anteriores y base v3) el costo mediano por ruta, caché mediana, % citas no encontradas,
+   % símbolo lejano/ausente, % ausencias refutadas, % interrumpidas, % vueltas con tope, /bien sobre
+   /bien+/mal y % cierres con oferta. El n va siempre; bajo `HEALTH_MIN_N` (20) por categoría dice
+   "sin datos suficientes" (con `--crudo` muestra la cifra y "muestra pequeña"). `minka doctor` aplica
+   los mismos datos de los últimos 7 días con `HEALTH_CACHE_MIN` (0.80), `HEALTH_CITATIONS_MISSING_MAX`
+   (0.05), `HEALTH_ABSENCE_REFUTED_MAX` (0.0) y `HEALTH_COST_RISE_PCT` (0.25 contra los 7 anteriores);
+   nunca bloquea ni alerta con poca muestra. Las ausencias ("no existe", "no hay", `[NO ENCONTRADO`) se
+   cuentan tras mostrar la respuesta y se contrastan con `git grep` en la rama checkouteada de los
+   repos que la frase menciona (≤1 s, ≤3 nombres); solo conteo: nada se marca ni se avisa al modelo.
 1. `minka stats --day` (o `--month`). Mira primero **rutas del router**: `info_direct` es una
    llamada directa a architecture (barata); `llm` pasa por el planner y suele encadenar pasos.
    Si la proporción de `llm` subió, revisa qué pedidos lo provocan (`minka trace --last` con la
@@ -119,7 +135,17 @@ scripts/release.sh v0.3.0 --dry-run  # solo verificaciones y build (lo corre el 
 Ambos scripts se prueban con `scripts/verify_release_scripts.sh` contra un repositorio git local
 temporal (`file://`), nunca contra `origin`; `tests/test_release_scripts.py` lo ejecuta en la suite.
 
-## 6. Qué NO está verificado
+## 6. Resumen programado (launchd, EJEMPLO no instalado)
+
+`docs/ejemplos/com.minka.salud.plist` ejecuta `minka stats --salud --crudo` a las 09:00 y solo
+imprime: sin modelo, sin red y sin escrituras de minka (launchd vuelca stdout/stderr en los archivos
+de `StandardOutPath`/`StandardErrorPath`). No se instala con el paquete ni con `minka init`: hay que
+copiarlo a `~/Library/LaunchAgents/` y rellenar las tres rutas (`minka`, `MINKA_HOME`, log) antes de
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.minka.salud.plist`. Probar:
+`launchctl kickstart -k gui/$(id -u)/com.minka.salud`; quitar: `launchctl bootout …`. No se ha
+ejecutado en ninguna máquina: solo se validó la sintaxis con `plutil -lint`.
+
+## 7. Qué NO está verificado
 
 - El workflow de CI (`.github/workflows/ci.yml`) no se ha ejecutado en GitHub: ni la sintaxis con
   `actionlint` (no instalado) ni la **cuota de GitHub Actions en un repositorio privado**.
@@ -144,3 +170,8 @@ temporal (`file://`), nunca contra `origin`; `tests/test_release_scripts.py` lo 
   existentes). No se han ejercitado en respuestas completas. La foto de ramas costó ~430 ms por
   corrida con 4 repos en una máquina; no medida en otras. La parte 2 se publicó dentro del commit
   `0285a45`, titulado como la parte 1.
+- Paso 12b (0.2.5): medidor pasivo con muestra pequeña (semana 45: 125 corridas; 46: 18; 47: 2). Solo
+  10 de 112 negaciones guardadas eran evaluables con el patrón estricto (1 refutada); la precisión de las
+  refutadas no se verificó a mano. `/bien` y `/mal` provienen de un solo usuario. La comprobación de
+  ausencias mira solo la rama checkouteada. Todo probado sin red (repos git temporales, fechas fijas);
+  el plist de launchd no se instaló.
