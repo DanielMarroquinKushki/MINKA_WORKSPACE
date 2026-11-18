@@ -1,6 +1,6 @@
 # Estado de minka — qué es, cómo funciona y qué se ha comprobado
 
-Fecha: 2026-11-17 · versión del paquete 0.2.5 (paso 12b; última etiqueta publicada `v0.2.4`) · suite: ver `uv run pytest -q`.
+Fecha: 2026-11-17 · versión del paquete 0.2.6 (paso 12b; última etiqueta publicada `v0.2.4`) · suite: ver `uv run pytest -q`.
 Todo lo afirmado aquí se verifica en el código (`archivo:línea`), en los tests o en los informes de
 medición (`escaner_final.md`, `escaner_cierre.md`, `escaner_separacion.md`). Lo que no se pudo
 comprobar está marcado **no verificado**. Los ejemplos usan un "proyecto de ejemplo" con repos

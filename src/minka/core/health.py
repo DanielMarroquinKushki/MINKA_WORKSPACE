@@ -106,7 +106,7 @@ def load_baseline(cfg) -> dict | None:
 
 def baseline_filter_matches(baseline: dict | None) -> bool | None:
     """True si la base se congeló con el mismo filtro de fuentes que las columnas semanales; False si difiere;
-    None si la base no registró su filtro (anterior a 0.2.5) y por tanto no se puede saber."""
+    None si la base no registró su filtro (anterior a 0.2.6) y por tanto no se puede saber."""
     if not baseline:
         return None
     recorded = baseline.get("source_filter")
