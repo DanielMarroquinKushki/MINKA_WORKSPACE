@@ -337,12 +337,61 @@ class Orchestrator:
         self.last_absences = result
         return result
 
+    _SEARCH_TOOLS = ("grep_code", "find_usages", "find_interface", "list_files", "scan_directory")
+
+    def searched_globs(self) -> list[str]:
+        """Globs/patrones de archivos que las tools de búsqueda recorrieron en la corrida, según los args
+        registrados en usage.per_iteration[].tools (base_agent.TOOL_LOG_ARGS). None/ausente = glob del
+        stack. Si EXTRA_SEARCH_GLOBS está activa y hubo un grep literal o find_usages, esos globs también
+        cuentan: la pasada fuera del stack corre exactamente cuando el literal no apareció en el stack."""
+        from minka.core import stacks
+        from minka.core.tools.filesystem import search_tools
+
+        stack_glob = stacks.profile().glob
+        globs: list[str] = []
+        literal = False
+
+        def add(g: str | None) -> None:
+            value = (g or "").strip() or stack_glob
+            if value not in globs:
+                globs.append(value)
+
+        for u in self.last_usage.get("per_agent") or []:
+            for step in (u.get("per_iteration") or []) if isinstance(u, dict) else []:
+                for t in step.get("tools") or []:
+                    name, args = t.get("name"), t.get("args") or {}
+                    if name not in self._SEARCH_TOOLS:
+                        continue
+                    if name == "grep_code":
+                        add(args.get("glob"))
+                        literal = literal or (search_tools.is_literal(str(args.get("pattern") or "")) and not args.get("glob"))
+                    elif name in ("find_usages", "find_interface"):
+                        add(None)
+                        literal = literal or name == "find_usages"
+                    elif name == "list_files":
+                        add(args.get("pattern"))
+                    else:
+                        ext = args.get("include_ext")
+                        add(f"*{ext}" if ext else (stack_glob if ext is None else "*"))
+        if literal:
+            for g in getattr(config, "EXTRA_SEARCH_GLOBS", ()) or ():
+                add(g)
+        return globs
+
     def _with_branch_note(self, text: str) -> str:
-        """Solo para mostrar: si la respuesta niega algo y algún repo no está en su base, dice sobre
-        qué ramas se buscó. No va a la memoria ni al modelo."""
+        """Solo para mostrar: si la respuesta niega algo, dice sobre qué ramas y archivos se buscó (cuando
+        algún repo no está en su base) y avisa "no se buscó en YAML/config" si niega un nombre con pinta de
+        infraestructura sin haber recorrido YAML/config. No va a la memoria ni al modelo."""
         if not text or self.branches is None or not repo_branches.mentions_absence(text):
             return text
-        note = self.branches.search_note()
+        try:
+            globs = self.searched_globs()
+            warning = None
+            if absence_check.infra_absences(text) and not any(absence_check.is_config_glob(g) for g in globs):
+                warning = absence_check.NO_CONFIG_WARNING
+            note = self.branches.search_note(files=", ".join(globs) if globs else None, warning=warning)
+        except Exception:  # noqa: BLE001 — la nota nunca rompe la respuesta
+            note = self.branches.search_note()
         return f"{text.rstrip()}\n\n_{note}_" if note else text
 
     def _risk_ids(self) -> set[str] | None:

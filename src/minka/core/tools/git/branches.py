@@ -85,13 +85,22 @@ class RepoBranches:
         base = next((i.base for i in self.infos.values() if i.base), "master").removeprefix("origin/")
         return " | ".join(i.label(base) for i in self.infos.values()) + f" · {self.elapsed_ms} ms"
 
-    def search_note(self) -> str | None:
-        """Línea tenue para una respuesta que niega algo; None si todo está en la base."""
+    def search_note(self, files: str | None = None, warning: str | None = None) -> str | None:
+        """Línea tenue para una respuesta que niega algo. Partes: repos fuera de su base, "archivos: <globs
+        recorridos>" y un aviso ("no se buscó en YAML/config"). None si todo está en la base y no hay aviso:
+        no se añade ruido a cada negación."""
         off = self.off_base()
-        if not off:
+        if not off and not warning:
             return None
-        base = (off[0].base or "master").removeprefix("origin/")
-        return "Búsqueda sobre: " + ", ".join(i.label(base) for i in off)
+        parts: list[str] = []
+        if off:
+            base = (off[0].base or "master").removeprefix("origin/")
+            parts.append(", ".join(i.label(base) for i in off))
+        if files:
+            parts.append(f"archivos: {files}")
+        if warning:
+            parts.append(warning)
+        return "Búsqueda sobre: " + " · ".join(parts)
 
 
 def mentions_absence(text: str) -> bool:

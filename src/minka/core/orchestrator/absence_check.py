@@ -34,6 +34,12 @@ STRICT_RE = re.compile(
 )
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
+# Paso 12b-C (nota B): una ausencia sobre algo que suena a infraestructura (lambda, cola, tabla, variable
+# de entorno…) suele vivir en YAML/config, no en el código del stack.
+INFRA_RE = re.compile(r"\b(lambda|queue|cola|tabla|table|env|handler|function|sqs|dynamo\w*)\b", re.IGNORECASE)
+CONFIG_GLOB_RE = re.compile(r"(\.ya?ml|serverless|\.json|makefile|\.sh|\.toml|\.env|\.ini|\.cfg|\.properties)$", re.IGNORECASE)
+NO_CONFIG_WARNING = "no se buscó en YAML/config"
+
 STATUS_REFUTED = "refutada"
 STATUS_CONFIRMED = "confirmada"
 STATUS_UNCLEAR = "no evaluable"
@@ -174,3 +180,24 @@ def check(
         elif item.status == STATUS_UNCLEAR:
             result.unclear += 1
     return result
+
+
+def infra_absences(text: str) -> list[str]:
+    """Nombres negados (STRICT_RE) cuya línea habla de infraestructura (INFRA_RE)."""
+    out: list[str] = []
+    for line in _prose_lines(text):
+        if not INFRA_RE.search(line):
+            continue
+        for m in STRICT_RE.finditer(line):
+            name = (m.group(1) or m.group(2) or "").strip()
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
+def is_config_glob(glob: str | None) -> bool:
+    """True si el glob/patrón recorre YAML o archivos de configuración (`*.yml`, `serverless.yml`, `Makefile`…)."""
+    value = (glob or "").strip()
+    if value in ("*", "**/*"):
+        return True
+    return bool(value) and bool(CONFIG_GLOB_RE.search(value))

@@ -1696,7 +1696,7 @@ wheels = [
 
 [[package]]
 name = "minka-workspace"
-version = "0.2.6"
+version = "0.2.7"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic", extra = ["bedrock"] },

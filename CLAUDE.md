@@ -93,6 +93,12 @@ quedamos?" al abrir la sesión responde con el contexto vivo sin modelo.
   (nunca en el prompt) con `CONTEXT_STALE_DAYS` (30): `(entrada del <fecha>; verifica en el código)`;
   "inconsistente con la corrida anterior" solo entre corridas distintas. `evals quality` puntúa sobre el
   texto sin marcas (`strip_marks`).
+- **Búsqueda fuera del stack (0.2.7, `search_tools.py`)**: `grep_code`/`find_usages` con un nombre literal, glob
+  del stack y 0 coincidencias recorren una vez `EXTRA_SEARCH_GLOBS` (`serverless.yml`, `*.yml`, `*.yaml`,
+  `Makefile`, `*.sh`; `*.json` opcional por proyecto) saltando `EXTRA_SEARCH_SKIP` + `EXCLUDE_PATTERNS`
+  (≤1 MB, 3/archivo, 20 total, 160 caracteres, redactado) y anexan `[fuera del stack: N coincidencias]`.
+  La nota `Búsqueda sobre` añade `archivos: <globs recorridos>` y `no se buscó en YAML/config` si se niega un
+  nombre de infraestructura sin haber recorrido YAML. Nada de esto toca schemas ni prompts.
 - **Ramas por repo** (`core/tools/git/branches.py`, git local sin red, ~430 ms con 4 repos): foto por
   corrida en `/status` y en el resumen (stderr). Si la respuesta niega algo y un repo no está en master
   (o main), termina con `_Búsqueda sobre: pos@rama (+N sobre master)…_`. Nunca al modelo.

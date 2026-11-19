@@ -188,6 +188,21 @@ EXCLUDE_PATTERNS: tuple = (
     ".env*", "*.pem", "*.key", "*.p12", "*.jks", "id_rsa*", "credentials", "secrets*", ".aws", ".ssh",
 )
 EXCLUDE_PATTERNS_EXTRA: tuple = ()
+# Búsqueda fuera del stack (core/tools/filesystem/search_tools.py, 0.2.7): cuando grep_code/find_usages
+# buscan un NOMBRE LITERAL y la pasada por el glob del stack (*.go) da 0 coincidencias, se recorre una
+# sola vez el árbol con estos globs (infraestructura y scripts) y se anexa "[fuera del stack: N
+# coincidencias]". *.json no entra por defecto (lockfiles enormes); el proyecto puede añadirlo en
+# projects/<p>/config.py. () apaga la pasada. EXTRA_SEARCH_SKIP poda carpetas y archivos además de
+# EXCLUDE_PATTERNS. Topes: archivos ≤ EXTRA_SEARCH_MAX_FILE_BYTES, 3 por archivo, 20 en total, líneas a
+# 160 caracteres y redactadas. No toca schemas ni prompts (prompt_hash intacto).
+EXTRA_SEARCH_GLOBS: tuple = ("serverless.yml", "*.yml", "*.yaml", "Makefile", "*.sh")
+EXTRA_SEARCH_SKIP: tuple = (
+    "package-lock.json", "*.lock", "go.sum", ".idea", "bin", ".serverless", "vendor", "node_modules", ".git",
+)
+EXTRA_SEARCH_MAX_FILE_BYTES = 1_000_000
+EXTRA_SEARCH_PER_FILE = 3
+EXTRA_SEARCH_MAX_HITS = 20
+EXTRA_SEARCH_LINE_CHARS = 160
 # Redacción de secretos de alta confianza en el resultado de cada tool antes de ir al modelo y en
 # agent_runs.jsonl (claves AWS, llaves privadas, JWT, Bearer, PAN válido por Luhn). Nunca hex/KCV/alias.
 SECRET_REDACTION_ENABLED = os.getenv("SECRET_REDACTION_ENABLED", "true").strip().lower() in ("1", "true", "yes")

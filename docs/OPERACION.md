@@ -67,6 +67,13 @@ de día; logs y feedback por línea, según su `ts`). `baseline_v3.json` nunca e
    revisar, no es error). Las ausencias ("no existe", "no hay", `[NO ENCONTRADO`) se
    cuentan tras mostrar la respuesta y se contrastan con `git grep` en la rama checkouteada de los
    repos que la frase menciona (≤1 s, ≤3 nombres); solo conteo: nada se marca ni se avisa al modelo.
+0d. Búsqueda fuera del stack (0.2.7): si `grep_code`/`find_usages` buscan un nombre literal con el glob del
+   stack y no hay coincidencias, el resultado de la tool añade `[fuera del stack: N coincidencias]` con lo
+   hallado en `EXTRA_SEARCH_GLOBS` (`serverless.yml`, `*.yml`, `*.yaml`, `Makefile`, `*.sh`; añade `"*.json"`
+   en `projects/<p>/config.py` si lo necesitas), saltando `EXTRA_SEARCH_SKIP` y `EXCLUDE_PATTERNS`, ≤1 MB por
+   archivo, 3 por archivo, 20 en total, 160 caracteres, redactado. `EXTRA_SEARCH_GLOBS = ()` la apaga. La
+   nota `Búsqueda sobre` muestra `archivos: *.go, *.yml…` y `no se buscó en YAML/config` cuando la respuesta
+   niega un nombre de infraestructura sin haber recorrido YAML. Nada va al modelo ni a la memoria.
 1. `minka stats --day` (o `--month`). Mira primero **rutas del router**: `info_direct` es una
    llamada directa a architecture (barata); `llm` pasa por el planner y suele encadenar pasos.
    Si la proporción de `llm` subió, revisa qué pedidos lo provocan (`minka trace --last` con la
@@ -173,6 +180,10 @@ ejecutado en ninguna máquina: solo se validó la sintaxis con `plutil -lint`.
   existentes). No se han ejercitado en respuestas completas. La foto de ramas costó ~430 ms por
   corrida con 4 repos en una máquina; no medida en otras. La parte 2 se publicó dentro del commit
   `0285a45`, titulado como la parte 1.
+- Paso 12b-C (0.2.7): cota de 1-3 sobre 91 negaciones medida en previews de 500 caracteres, no en respuestas
+  completas; el ejemplo `'*.go'` del schema sigue sesgando al modelo y no se tocó por `prompt_hash`; sin
+  ripgrep real en la máquina de desarrollo (tests con rg en skip); `*.json` es opcional; latencia de la pasada
+  extra en repos grandes no medida.
 - Paso 12b (0.2.5): medidor pasivo con muestra pequeña (semana 45: 125 corridas; 46: 18; 47: 2). Solo
   10 de 112 negaciones guardadas eran evaluables con el patrón estricto (1 refutada); la precisión de las
   refutadas no se verificó a mano. `/bien` y `/mal` provienen de un solo usuario. La comprobación de

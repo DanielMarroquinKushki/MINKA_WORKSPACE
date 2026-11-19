@@ -1,5 +1,39 @@
 # Cambios
 
+## 0.2.7 — paso 12b-C: que un "no existe" no salga de buscar solo en el tipo de archivo del stack
+
+Nada mueve la línea base de prompts (`prompt_hash` aabeff39c4ee / a447c50efa60): ni schemas de tools ni
+prompts cambian; solo el resultado de una tool y una nota en pantalla.
+
+- **A. Búsqueda fuera del stack** (`core/tools/filesystem/search_tools.py`): `grep_code` y `find_usages`,
+  cuando el patrón es un NOMBRE LITERAL (`re.escape(p) == p`, o el símbolo de `find_usages`), el glob es el
+  del stack y la pasada da 0 coincidencias, recorren UNA vez el árbol con `os.walk` podando carpetas y
+  miran solo `EXTRA_SEARCH_GLOBS` (default `serverless.yml`, `*.yml`, `*.yaml`, `Makefile`, `*.sh`; `*.json`
+  NO entra por defecto, el proyecto puede añadirlo en `projects/<p>/config.py`). `EXTRA_SEARCH_SKIP`
+  (`package-lock.json`, `*.lock`, `go.sum`, `.idea`, `bin`, `.serverless`, `vendor`, `node_modules`, `.git`)
+  además de `EXCLUDE_PATTERNS`. Topes: archivos ≤ 1 MB, 3 coincidencias por archivo, 20 en total, líneas a
+  160 caracteres y por `security.redact`. Salida: `[sin coincidencias en *.go]` + `[fuera del stack: N
+  coincidencias]` + `ruta:línea: texto`. `EXTRA_SEARCH_GLOBS=()` la apaga. Un glob elegido por el agente se
+  respeta sin segunda pasada.
+- **B. Nota "Búsqueda sobre"** (`orchestrator._with_branch_note`, `branches.search_note`): añade
+  `archivos: <globs recorridos>` tomados de los args registrados de las tools de búsqueda
+  (`Orchestrator.searched_globs`; con A activa, un grep literal cuenta sus globs extra). Si la respuesta niega
+  un nombre (`absence_check.STRICT_RE`) en una línea que habla de infraestructura
+  (`lambda|queue|cola|tabla|table|env|handler|function|sqs|dynamo`) y ningún glob recorrido fue YAML/config,
+  añade `no se buscó en YAML/config` aunque los repos estén en su base. Solo en pantalla: nunca al modelo ni a
+  la memoria.
+
+### Límites
+- Cota medida: 1-3 de 91 negaciones afectadas, sobre vistas previas de 500 caracteres (`agent_runs.jsonl`),
+  no sobre respuestas completas. El caso claro es un nombre declarado solo en `serverless.yml` del repo
+  nombrado. Del set de oro solo `abs-logon-pos` podría cambiar (1 línea `.yml` en pos); los demás no tienen
+  coincidencias fuera de `.go`.
+- El ejemplo `'*.go'` del schema de `grep_code` sigue sesgando al modelo (83 % de los grep guardados usan
+  `*.go`); no se tocó porque mueve el `prompt_hash`.
+- En esta máquina no hay ripgrep real en PATH: la pasada del stack corre el fallback Python y los tests con
+  rg quedan en skip (no verificado aquí). La pasada extra es Python siempre.
+- Sin medición de latencia en repos grandes; la pasada extra lee archivos ≤ 1 MB de los globs listados.
+
 ## 0.2.6 — paso 12b, ajustes del medidor (sin dato, amend atómico, filtro de la base, ausencias informativas)
 
 Nada mueve la línea base de prompts (`prompt_hash` aabeff39c4ee / a447c50efa60). Solo lectura local y

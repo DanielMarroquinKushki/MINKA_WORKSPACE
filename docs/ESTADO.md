@@ -1,6 +1,6 @@
 # Estado de minka — qué es, cómo funciona y qué se ha comprobado
 
-Fecha: 2026-11-17 · versión del paquete 0.2.6 (paso 12b; última etiqueta publicada `v0.2.4`) · suite: ver `uv run pytest -q`.
+Fecha: 2026-11-17 · versión del paquete 0.2.7 (paso 12b; última etiqueta publicada `v0.2.4`) · suite: ver `uv run pytest -q`.
 Todo lo afirmado aquí se verifica en el código (`archivo:línea`), en los tests o en los informes de
 medición (`escaner_final.md`, `escaner_cierre.md`, `escaner_separacion.md`). Lo que no se pudo
 comprobar está marcado **no verificado**. Los ejemplos usan un "proyecto de ejemplo" con repos
@@ -184,6 +184,7 @@ respuesta dice "no existe", "no hay" o `[NO ENCONTRADO` y un repo no está en su
 | `minka evals routing [--runs 1-5] [--json-out] [--from-feedback]` | mide el planner con los casos `eval=info` de `core/evals/routing_cases.json` (60 casos golden en total) más `projects/<p>/evals/routing_cases.json` si existe; cuesta tokens. `--from-feedback` no llama al LLM: convierte `evals/routing_feedback.jsonl` (`/mal`) en `evals/routing_cases.draft.json` |
 | `minka stats` / `minka doctor` (tope diario) | si el gasto del día (sin `eval_quality`) alcanza `DAILY_MAX_USD` (20) avisan; nunca bloquean |
 | Freno de gasto (`SESSION_MAX_USD` 5.0, `BURST_N` 3, `BURST_GAP_SECONDS` 5, `ESTIMATE_CONFIRM_USD` 0.50, `ESTIMATE_MIN_RUNS` 5) | antes de lanzar un agente: tope de sesión (suma planner e interrumpidas), ráfaga (3 corridas con agente seguidas a <5 s del fin de la anterior) y estimado previo (router `llm` o 2+ pasos). REPL con TTY pregunta ("sí" sube un escalón / reinicia la ráfaga / acepta el estimado; "no" descarta); sin TTY o bridge: línea y exit 3. Las capas de $0, `evals quality` y el bridge no pasan por él |
+| `EXTRA_SEARCH_GLOBS` / `EXTRA_SEARCH_SKIP` (config, por proyecto) | `grep_code`/`find_usages` con nombre literal y 0 coincidencias en el stack buscan una vez en `serverless.yml`, `*.yml`, `*.yaml`, `Makefile`, `*.sh` (`*.json` opcional) y anexan `[fuera del stack: N coincidencias]`; `()` apaga. La nota `Búsqueda sobre` lista `archivos:` recorridos y avisa `no se buscó en YAML/config` |
 | `minka knowledge check [--project]` | citas del knowledge contra REPOS; exit 1 si hay rotas |
 | `minka knowledge init [--project] [--apply] [--yes]` | borrador determinista de knowledge; `--apply` nunca sobrescribe |
 | `minka knowledge scan [--project]` | secretos en `knowledge/` (ruta:línea y tipo, nunca el valor); `TEST_VALUES` y marcas `<!-- ejemplo -->` cuentan aparte; exit 1 con fallos |
@@ -262,6 +263,11 @@ respuesta dice "no existe", "no hay" o `[NO ENCONTRADO` y un repo no está en su
   (`citation_check.py:1-10`, `claim_check.py:1-11`). No lee dentro de bloques de código ni de literales
   entre comillas. Una línea con varios símbolos vale si alguno está cerca; las minúsculas sueltas no
   cuentan como símbolo.
+- Paso 12b-C (0.2.7): la búsqueda fuera del stack solo corre con nombres literales y 0 coincidencias en
+  `*.go` (`search_tools.py`), con `*.json` opcional; cota medida de 1-3 sobre 91 negaciones en previews de
+  500 caracteres. El ejemplo `'*.go'` del schema de `grep_code` sigue sesgando al modelo (83 % de los grep
+  guardados) y no se tocó por `prompt_hash`. Sin ripgrep real en la máquina de desarrollo: la pasada del
+  stack usa el fallback Python (rg **no verificado** aquí).
 - Paso 12b (0.2.5) es un **medidor pasivo con muestra pequeña**: semana 45 con 125 corridas, 46 con 18,
   47 con 2; casi todas las celdas de `stats --salud` dicen "sin datos suficientes" hasta juntar 20 por
   categoría. Sobre lo guardado solo 10 de 112 negaciones eran evaluables con el patrón estricto
